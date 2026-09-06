@@ -45,6 +45,8 @@ const props = defineProps<{
   hostId: string | null
   sessionId: string | null
   active: boolean
+  /** False while the pane's tab is hidden; it keeps running but must not take focus. */
+  tabActive: boolean
   /** False for a pane restored from a previous run: it waits for the user. */
   autoConnect?: boolean
 }>()
@@ -147,7 +149,11 @@ async function connect() {
   }
 
   const onData = new Channel<ArrayBuffer>()
-  onData.onmessage = (chunk) => term.write(new Uint8Array(chunk))
+  onData.onmessage = (chunk) => {
+    term.write(new Uint8Array(chunk))
+    // Drives the unread dot on tabs that are not currently visible.
+    sessions.noteOutput(props.tabId)
+  }
 
   try {
     const sessionId = await connectWithHostKeyPrompt({
@@ -253,11 +259,21 @@ onBeforeUnmount(() => {
   terminal.value?.dispose()
 })
 
-// Focus follows the active pane so keystrokes land where the highlight is.
+// Focus follows the active pane, but only within the visible tab: a hidden tab must not
+// steal keystrokes from the one on screen.
 watch(
-  () => props.active,
-  (active) => {
-    if (active) terminal.value?.focus()
+  () => [props.active, props.tabActive] as const,
+  ([active, tabActive]) => {
+    if (active && tabActive) terminal.value?.focus()
+  },
+  { immediate: true },
+)
+
+// A hidden tab reports no size, so refit when it comes back into view.
+watch(
+  () => props.tabActive,
+  (tabActive) => {
+    if (tabActive) requestAnimationFrame(handleResize)
   },
 )
 

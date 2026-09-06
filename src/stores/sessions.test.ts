@@ -367,3 +367,72 @@ describe('workspaces', () => {
     expect(JSON.parse(json)).toMatchObject({ version: 1, tabs: [{ name: 'web' }] })
   })
 })
+
+describe('unread activity', () => {
+  it('marks a background tab that produced output', () => {
+    const store = useSessionsStore()
+    const background = store.openTab('background')
+    const visible = store.openTab('visible')
+
+    store.noteOutput(background.id)
+
+    expect(store.hasUnread(background.id)).toBe(true)
+    expect(store.hasUnread(visible.id)).toBe(false)
+  })
+
+  it('ignores output from the tab already on screen', () => {
+    const store = useSessionsStore()
+    const tab = store.openTab('visible')
+
+    store.noteOutput(tab.id)
+
+    // The user is watching it; a dot would be noise.
+    expect(store.hasUnread(tab.id)).toBe(false)
+  })
+
+  it('clears the marker when the tab is opened', () => {
+    const store = useSessionsStore()
+    const background = store.openTab('background')
+    store.openTab('visible')
+    store.noteOutput(background.id)
+
+    store.focusTab(background.id)
+
+    expect(store.hasUnread(background.id)).toBe(false)
+  })
+
+  it('stays marked while a different tab is focused', () => {
+    const store = useSessionsStore()
+    const background = store.openTab('background')
+    const other = store.openTab('other')
+    store.openTab('visible')
+    store.noteOutput(background.id)
+
+    store.focusTab(other.id)
+
+    expect(store.hasUnread(background.id)).toBe(true)
+  })
+
+  it('does not accumulate duplicates', () => {
+    const store = useSessionsStore()
+    const background = store.openTab('background')
+    store.openTab('visible')
+
+    store.noteOutput(background.id)
+    store.noteOutput(background.id)
+
+    expect(store.unread.size).toBe(1)
+  })
+
+  it('forgets a closed tab', async () => {
+    const store = useSessionsStore()
+    const background = store.openTab('background')
+    store.openTab('visible')
+    store.noteOutput(background.id)
+
+    await store.closeTab(background.id)
+
+    expect(store.hasUnread(background.id)).toBe(false)
+    expect(store.unread.size).toBe(0)
+  })
+})

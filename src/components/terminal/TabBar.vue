@@ -27,6 +27,12 @@ const emit = defineEmits<{ newTab: [] }>()
         )"
         @mousedown="sessions.focusTab(tab.id)"
       >
+        <span
+          v-if="sessions.hasUnread(tab.id)"
+          class="size-1.5 shrink-0 rounded-full bg-primary"
+          :aria-label="`${tab.name} has new output`"
+          role="status"
+        />
         <span class="truncate">{{ tab.name }}</span>
         <Button
           variant="ghost"

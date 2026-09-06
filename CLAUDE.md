@@ -182,3 +182,16 @@ Layout: 8px spacing grid (4px in dense lists). Radius 0 for data rows and tables
 Motion: 120ms state, 240ms panels, `cubic-bezier(0.2, 0, 0, 1)`. No spring, no bounce. Connection state changes are instant. Loading is a blinking lime block cursor, never a spinner.
 Every action needs a keyboard shortcut, displayed inline next to the action, not hidden in a menu.
 UI copy: terse, exact, deadpan. State the fact, then the next keystroke ("No host selected. Pick one. ⌘K searches all 41."). No exclamation marks, no emoji, no "Oops", no "Let's", no welcome tours.
+
+## Tabs stay mounted
+
+`TerminalsView` renders every tab and hides the inactive ones with `v-show`. Do not switch
+this to `v-if` or key the SplitView on the active tab: unmounting a pane disposes its
+xterm, which drops the IPC channel, which ends the SSH session behind it - so switching
+tabs would silently disconnect you.
+
+Consequences that have to be kept in mind:
+
+- A hidden tab reports zero size, so `TerminalPane` refits when `tabActive` turns true.
+- Only the visible tab may take focus, hence the `tabActive` prop guarding `term.focus()`.
+- Output from a hidden tab sets an unread marker, shown as a dot on the tab.

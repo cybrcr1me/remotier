@@ -49,6 +49,9 @@ export const useSessionsStore = defineStore('sessions', () => {
   const awaitingReconnect = ref(new Set<string>())
   const restoring = ref(false)
 
+  /** Tabs that produced output while they were not the visible one. */
+  const unread = ref(new Set<string>())
+
   const activeTab = computed(() => tabs.value.find(tab => tab.id === activeTabId.value) ?? null)
   const activePane = computed(() => {
     const tab = activeTab.value
@@ -79,7 +82,31 @@ export const useSessionsStore = defineStore('sessions', () => {
   }
 
   function focusTab(tabId: string) {
-    if (tabById(tabId)) activeTabId.value = tabId
+    if (!tabById(tabId)) return
+    activeTabId.value = tabId
+    clearUnread(tabId)
+  }
+
+  /**
+   * Record output from a tab. Ignored for the visible tab, which the user is watching
+   * anyway.
+   */
+  function noteOutput(tabId: string) {
+    if (tabId === activeTabId.value || unread.value.has(tabId)) return
+    const next = new Set(unread.value)
+    next.add(tabId)
+    unread.value = next
+  }
+
+  function clearUnread(tabId: string) {
+    if (!unread.value.has(tabId)) return
+    const next = new Set(unread.value)
+    next.delete(tabId)
+    unread.value = next
+  }
+
+  function hasUnread(tabId: string) {
+    return unread.value.has(tabId)
   }
 
   /** Disconnect everything in the tab, then drop it. */
@@ -90,6 +117,7 @@ export const useSessionsStore = defineStore('sessions', () => {
     const live = sessionIds(tab.layout)
     const index = tabs.value.findIndex(t => t.id === tabId)
     tabs.value = tabs.value.filter(t => t.id !== tabId)
+    clearUnread(tabId)
 
     if (activeTabId.value === tabId) {
       // Focus the neighbour that took its place, or the new last tab.
@@ -285,6 +313,10 @@ export const useSessionsStore = defineStore('sessions', () => {
     tabs,
     activeTabId,
     awaitingReconnect,
+    unread,
+    noteOutput,
+    clearUnread,
+    hasUnread,
     activeTab,
     activePane,
     tabById,

@@ -13,6 +13,8 @@ const props = defineProps<{
   node: LayoutNode
   tabId: string
   activePaneId: string
+  /** False while this tab is hidden behind another. */
+  tabActive: boolean
 }>()
 
 const sessions = useSessionsStore()
@@ -38,6 +40,7 @@ const emit = defineEmits<{
     :host-id="props.node.hostId"
     :session-id="props.node.sessionId"
     :active="props.node.id === props.activePaneId"
+    :tab-active="props.tabActive"
     :auto-connect="sessions.shouldAutoConnect(props.node.id)"
     :class="cn(
       'h-full',
@@ -61,6 +64,7 @@ const emit = defineEmits<{
           :node="child"
           :tab-id="props.tabId"
           :active-pane-id="props.activePaneId"
+          :tab-active="props.tabActive"
           @focus-pane="paneId => emit('focusPane', paneId)"
           @resize="(splitId, sizes) => emit('resize', splitId, sizes)"
           @host-key="(prompt, decide) => emit('hostKey', prompt, decide)"

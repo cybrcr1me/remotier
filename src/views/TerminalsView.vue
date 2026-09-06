@@ -39,7 +39,7 @@ import { toast } from 'vue-sonner'
 
 const sessions = useSessionsStore()
 const inventory = useInventoryStore()
-const { activeTab } = storeToRefs(sessions)
+const { activeTab, activeTabId, tabs } = storeToRefs(sessions)
 
 const quickConnectOpen = ref(false)
 const hostKeyPrompt = ref<HostKeyPrompt | null>(null)
@@ -142,21 +142,31 @@ onBeforeUnmount(() => unlisten?.())
   <div class="flex h-full min-h-0 flex-col">
     <TabBar @new-tab="newTab" />
 
-    <div v-if="activeTab" class="min-h-0 flex-1">
+    <!--
+      Every tab stays mounted and is merely hidden. Tearing one down would dispose its
+      terminal, which drops the IPC channel and ends the SSH session behind it - so
+      switching tabs would silently disconnect you.
+    -->
+    <div
+      v-for="tab in tabs"
+      v-show="tab.id === activeTabId"
+      :key="tab.id"
+      class="min-h-0 flex-1"
+    >
       <SplitView
-        :key="activeTab.id"
-        :node="activeTab.layout"
-        :tab-id="activeTab.id"
-        :active-pane-id="activeTab.activePaneId"
+        :node="tab.layout"
+        :tab-id="tab.id"
+        :active-pane-id="tab.activePaneId"
+        :tab-active="tab.id === activeTabId"
         @focus-pane="sessions.focusPane"
-        @resize="(splitId, sizes) => sessions.setSizes(activeTab!.id, splitId, sizes)"
+        @resize="(splitId, sizes) => sessions.setSizes(tab.id, splitId, sizes)"
         @host-key="askAboutHostKey"
         @variables="askAboutVariables"
         @password="askForPassword"
       />
     </div>
 
-    <Empty v-else class="flex-1">
+    <Empty v-if="!activeTab" class="flex-1">
       <EmptyHeader>
         <EmptyMedia variant="icon">
           <TerminalIcon />
