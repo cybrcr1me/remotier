@@ -18,7 +18,8 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty'
-import { ScrollArea } from '@/components/ui/scroll-area'
+import PageBody from '@/components/layout/PageBody.vue'
+import ViewToolbar from '@/components/layout/ViewToolbar.vue'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import IdentityEditor from '@/components/keys/IdentityEditor.vue'
 import { errorMessage } from '@/lib/ipc'
@@ -67,7 +68,7 @@ async function confirmDelete() {
 
 <template>
   <div class="flex h-full min-h-0 flex-col">
-    <div class="flex shrink-0 items-center gap-2 border-b p-3">
+    <ViewToolbar>
       <p class="text-sm text-muted-foreground">
         Reusable username and credential pairs. Hosts and groups point at these.
       </p>
@@ -75,9 +76,9 @@ async function confirmDelete() {
         <PlusIcon data-icon="inline-start" />
         Identity
       </Button>
-    </div>
+    </ViewToolbar>
 
-    <ScrollArea v-if="identities.length" class="min-h-0 flex-1">
+    <PageBody v-if="identities.length">
       <Table>
         <TableHeader>
           <TableRow>
@@ -120,7 +121,7 @@ async function confirmDelete() {
           </TableRow>
         </TableBody>
       </Table>
-    </ScrollArea>
+    </PageBody>
 
     <Empty v-else class="flex-1">
       <EmptyHeader>

@@ -73,7 +73,7 @@ async fn shell_roundtrip(mut connection: connect::Connection) -> String {
 #[ignore = "needs the dockerised sshd"]
 async fn connects_with_a_password_and_runs_a_command() {
     let target = target(AuthMaterial::Password(Zeroizing::new(PASSWORD.into())));
-    let connection = connect::open(&target, HostKeyPolicy::TrustOnce, "xterm-256color", 80, 24)
+    let connection = connect::open(&target, HostKeyPolicy::TrustOnce, "xterm-256color", 80, 24, &|_| {})
         .await
         .expect("connect with password");
 
@@ -88,7 +88,7 @@ async fn connects_with_a_key_from_disk() {
         path: key_path(),
         passphrase: None,
     });
-    let connection = connect::open(&target, HostKeyPolicy::TrustOnce, "xterm-256color", 80, 24)
+    let connection = connect::open(&target, HostKeyPolicy::TrustOnce, "xterm-256color", 80, 24, &|_| {})
         .await
         .expect("connect with key");
 
@@ -104,7 +104,7 @@ async fn connects_with_a_key_held_in_the_vault() {
         pem: Zeroizing::new(pem),
         passphrase: None,
     });
-    let connection = connect::open(&target, HostKeyPolicy::TrustOnce, "xterm-256color", 80, 24)
+    let connection = connect::open(&target, HostKeyPolicy::TrustOnce, "xterm-256color", 80, 24, &|_| {})
         .await
         .expect("connect with vaulted key");
 
@@ -116,7 +116,7 @@ async fn connects_with_a_key_held_in_the_vault() {
 #[ignore = "needs the dockerised sshd"]
 async fn a_wrong_password_is_reported_as_an_auth_failure() {
     let target = target(AuthMaterial::Password(Zeroizing::new("nope".into())));
-    let Err(error) = connect::open(&target, HostKeyPolicy::TrustOnce, "xterm", 80, 24).await
+    let Err(error) = connect::open(&target, HostKeyPolicy::TrustOnce, "xterm", 80, 24, &|_| {}).await
     else {
         panic!("a wrong password must not authenticate");
     };
@@ -133,7 +133,7 @@ async fn strict_policy_refuses_a_host_it_has_never_seen() {
     // The container's key is not in known_hosts, so strict mode must refuse it and say
     // so precisely enough for the UI to show a fingerprint prompt.
     let target = target(AuthMaterial::Password(Zeroizing::new(PASSWORD.into())));
-    let Err(error) = connect::open(&target, HostKeyPolicy::Strict, "xterm", 80, 24).await else {
+    let Err(error) = connect::open(&target, HostKeyPolicy::Strict, "xterm", 80, 24, &|_| {}).await else {
         panic!("strict mode must refuse a host that is not in known_hosts");
     };
 
@@ -149,7 +149,7 @@ async fn strict_policy_refuses_a_host_it_has_never_seen() {
 #[ignore = "needs the dockerised sshd"]
 async fn resizing_a_live_pty_is_accepted() {
     let target = target(AuthMaterial::Password(Zeroizing::new(PASSWORD.into())));
-    let connection = connect::open(&target, HostKeyPolicy::TrustOnce, "xterm-256color", 80, 24)
+    let connection = connect::open(&target, HostKeyPolicy::TrustOnce, "xterm-256color", 80, 24, &|_| {})
         .await
         .expect("connect");
 
@@ -182,7 +182,7 @@ async fn connects_using_the_ssh_agent() {
     let target = target(AuthMaterial::Agent {
         public_openssh: None,
     });
-    let connection = connect::open(&target, HostKeyPolicy::TrustOnce, "xterm-256color", 80, 24)
+    let connection = connect::open(&target, HostKeyPolicy::TrustOnce, "xterm-256color", 80, 24, &|_| {})
         .await
         .expect("connect via agent");
 
@@ -237,7 +237,7 @@ async fn resolves_a_stored_host_and_connects_with_its_sealed_password() {
     let resolved = resolve::target(&db, &vault, &host_id).expect("resolve the stored host");
     assert_eq!(resolved.port, PORT, "the port must be inherited from the group");
 
-    let connection = connect::open(&resolved, HostKeyPolicy::TrustOnce, "xterm-256color", 80, 24)
+    let connection = connect::open(&resolved, HostKeyPolicy::TrustOnce, "xterm-256color", 80, 24, &|_| {})
         .await
         .expect("connect using the resolved target");
 
@@ -318,7 +318,7 @@ async fn connects_through_a_group_with_a_username_placeholder() {
     assert_eq!(target.username, USER, "the placeholder must be substituted");
     assert_eq!(target.port, PORT);
 
-    let connection = connect::open(&target, HostKeyPolicy::TrustOnce, "xterm-256color", 80, 24)
+    let connection = connect::open(&target, HostKeyPolicy::TrustOnce, "xterm-256color", 80, 24, &|_| {})
         .await
         .expect("connect through the warpgate-style group");
 
@@ -326,4 +326,73 @@ async fn connects_through_a_group_with_a_username_placeholder() {
     assert!(output.contains("remotier-ok"), "shell output was: {output}");
 
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The connection panel is only useful if the stages actually arrive, and in order.
+#[tokio::test]
+#[ignore = "needs the dockerised sshd"]
+async fn reports_each_connection_stage_in_order() {
+    use remotier_lib::ssh::connect::Stage;
+    use std::sync::{Arc, Mutex};
+
+    let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+    let recorder = {
+        let seen = Arc::clone(&seen);
+        move |stage: Stage| {
+            let name = match stage {
+                Stage::Connecting { .. } => "connecting",
+                Stage::HostKeyAccepted { .. } => "hostKeyAccepted",
+                Stage::Authenticating { .. } => "authenticating",
+                Stage::Authenticated { .. } => "authenticated",
+                Stage::OpeningShell { .. } => "openingShell",
+                Stage::Ready => "ready",
+            };
+            seen.lock().unwrap().push(name.to_string());
+        }
+    };
+
+    let target = target(AuthMaterial::Password(Zeroizing::new(PASSWORD.into())));
+    connect::open(&target, HostKeyPolicy::TrustOnce, "xterm-256color", 80, 24, &recorder)
+        .await
+        .expect("connect");
+
+    let stages = seen.lock().unwrap().clone();
+    assert_eq!(
+        stages,
+        vec![
+            "connecting",
+            "hostKeyAccepted",
+            "authenticating",
+            "authenticated",
+            "openingShell",
+            "ready",
+        ]
+    );
+}
+
+/// A failure has to leave the stages it did reach, so the panel can show how far it got.
+#[tokio::test]
+#[ignore = "needs the dockerised sshd"]
+async fn reports_stages_up_to_the_point_of_failure() {
+    use remotier_lib::ssh::connect::Stage;
+    use std::sync::{Arc, Mutex};
+
+    let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+    let recorder = {
+        let seen = Arc::clone(&seen);
+        move |stage: Stage| {
+            seen.lock().unwrap().push(format!("{stage:?}"));
+        }
+    };
+
+    let target = target(AuthMaterial::Password(Zeroizing::new("wrong".into())));
+    let result = connect::open(&target, HostKeyPolicy::TrustOnce, "xterm", 80, 24, &recorder).await;
+    assert!(result.is_err(), "a wrong password must not connect");
+
+    let stages = seen.lock().unwrap().clone();
+    assert!(stages.iter().any(|s| s.starts_with("Authenticating")), "got {stages:?}");
+    assert!(
+        !stages.iter().any(|s| s.starts_with("Authenticated")),
+        "must not report success: {stages:?}"
+    );
 }

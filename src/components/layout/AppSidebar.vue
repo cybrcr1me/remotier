@@ -11,6 +11,8 @@ import {
   SidebarRail,
 } from '@/components/ui/sidebar'
 import { navEntries } from '@/lib/nav'
+import { BAR_HEIGHT } from '@/lib/ui'
+import { cn } from '@/lib/utils'
 import { TerminalIcon } from '@lucide/vue'
 import { RouterLink, useRoute } from 'vue-router'
 
@@ -20,7 +22,10 @@ const route = useRoute()
 <template>
   <Sidebar collapsible="icon">
     <!-- Reserved strip for the macOS window buttons; also the window drag handle. -->
-    <SidebarHeader data-tauri-drag-region class="h-11 shrink-0 justify-center border-b p-0">
+    <SidebarHeader
+      data-tauri-drag-region
+      :class="cn('shrink-0 justify-center border-b p-0', BAR_HEIGHT)"
+    >
       <div class="flex items-center gap-2 pl-20 pr-2 group-data-[collapsible=icon]:hidden">
         <TerminalIcon class="size-4 shrink-0" />
         <span class="truncate text-sm font-medium">Remotier</span>

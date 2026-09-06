@@ -155,6 +155,8 @@ export interface ConnectRequest {
   rows: number
   policy?: HostKeyPolicy
   term?: string
+  /** Correlates `ssh://progress` events with the pane that started this attempt. */
+  attemptId: string
 }
 
 export interface PublicKeyInfo {
@@ -221,3 +223,15 @@ export interface Workspace {
   createdAt: number
   updatedAt: number
 }
+
+/** A step reported while a connection is being established. */
+export type ConnectStage =
+  | { stage: 'connecting', host: string, port: number }
+  | { stage: 'hostKeyAccepted', fingerprint: string }
+  | { stage: 'authenticating', method: string, username: string }
+  | { stage: 'authenticated', method: string }
+  | { stage: 'openingShell', term: string }
+  | { stage: 'ready' }
+
+/** Emitted on `ssh://progress`, correlated by the attempt id the caller supplied. */
+export type ConnectProgress = ConnectStage & { attemptId: string }

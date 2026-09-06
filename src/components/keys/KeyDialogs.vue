@@ -124,7 +124,12 @@ async function runImport() {
 
         <Field>
           <FieldLabel for="generate-passphrase">Passphrase</FieldLabel>
-          <Input id="generate-passphrase" v-model="generate.passphrase" type="password" />
+          <Input
+            id="generate-passphrase"
+            v-model="generate.passphrase"
+            type="password"
+            placeholder="Optional"
+          />
           <FieldDescription>
             Optional. The vault already encrypts the key at rest; a passphrase adds a second
             layer if the key is ever exported.
@@ -168,7 +173,12 @@ async function runImport() {
 
         <Field>
           <FieldLabel for="import-passphrase">Passphrase</FieldLabel>
-          <Input id="import-passphrase" v-model="imported.passphrase" type="password" />
+          <Input
+            id="import-passphrase"
+            v-model="imported.passphrase"
+            type="password"
+            placeholder="Only if the key is encrypted"
+          />
           <FieldDescription>Only needed if the key is encrypted.</FieldDescription>
         </Field>
       </FieldGroup>

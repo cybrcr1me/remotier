@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildTree, filterTree, groupIds, treeHosts, type GroupNode } from './tree'
+import { buildTree, filterTree, flattenHosts, groupIds, treeHosts, type GroupNode } from './tree'
 import type { Group, Host } from '@/lib/types'
 
 function group(id: string, name: string, parentId: string | null = null): Group {
@@ -146,5 +146,49 @@ describe('filterTree', () => {
 
   it('drops groups with no matches', () => {
     expect(filterTree(tree, 'nothing-matches-this')).toEqual([])
+  })
+})
+
+describe('flattenHosts', () => {
+  it('returns hosts with the groups above them', () => {
+    const tree = buildTree(
+      [group('a', 'Production'), group('b', 'Databases', 'a')],
+      [host('h1', 'web-01', 'a'), host('h2', 'db-01', 'b')],
+    )
+
+    expect(flattenHosts(tree)).toEqual([
+      { host: expect.objectContaining({ id: 'h2' }), groupPath: ['Production', 'Databases'] },
+      { host: expect.objectContaining({ id: 'h1' }), groupPath: ['Production'] },
+    ])
+  })
+
+  it('gives ungrouped hosts an empty path', () => {
+    const tree = buildTree([], [host('h1', 'loose')])
+
+    expect(flattenHosts(tree)).toEqual([
+      { host: expect.objectContaining({ id: 'h1' }), groupPath: [] },
+    ])
+  })
+
+  it('includes every host in the tree', () => {
+    const tree = buildTree(
+      [group('a', 'A'), group('b', 'B', 'a')],
+      [host('h1', 'one', 'a'), host('h2', 'two', 'b'), host('h3', 'three')],
+    )
+
+    expect(flattenHosts(tree)).toHaveLength(3)
+  })
+
+  it('is empty for an empty tree', () => {
+    expect(flattenHosts([])).toEqual([])
+  })
+
+  it('reflects a filtered tree', () => {
+    const tree = buildTree([group('a', 'Production')], [
+      host('h1', 'web-01', 'a'),
+      host('h2', 'db-01', 'a'),
+    ])
+
+    expect(flattenHosts(filterTree(tree, 'web')).map(f => f.host.id)).toEqual(['h1'])
   })
 })

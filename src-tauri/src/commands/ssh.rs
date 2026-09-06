@@ -7,6 +7,9 @@ use serde::Deserialize;
 use tauri::ipc::{Channel as IpcChannel, InvokeResponseBody};
 use tauri::{AppHandle, State};
 
+use serde::Serialize;
+use tauri::Emitter;
+
 use crate::db::new_id;
 use crate::error::Result;
 use crate::ssh::client::HostKeyPolicy;
@@ -25,6 +28,19 @@ pub struct ConnectRequest {
     #[serde(default = "strict_policy")]
     pub policy: HostKeyPolicy,
     pub term: Option<String>,
+    /// Correlates progress events with the pane that asked for the connection. The
+    /// session id does not exist yet while connecting, so the caller supplies this.
+    pub attempt_id: String,
+}
+
+pub const PROGRESS_EVENT: &str = "ssh://progress";
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProgressEvent {
+    attempt_id: String,
+    #[serde(flatten)]
+    stage: connect::Stage,
 }
 
 fn strict_policy() -> HostKeyPolicy {
@@ -57,7 +73,28 @@ pub async fn ssh_connect(
         target.port
     );
 
-    let connection = connect::open(&target, request.policy, &term, request.cols, request.rows).await?;
+    let attempt_id = request.attempt_id.clone();
+    let reporter = app.clone();
+    let on_stage = move |stage: connect::Stage| {
+        // Progress is advisory: a failed emit must not fail the connection.
+        let _ = reporter.emit(
+            PROGRESS_EVENT,
+            ProgressEvent {
+                attempt_id: attempt_id.clone(),
+                stage,
+            },
+        );
+    };
+
+    let connection = connect::open(
+        &target,
+        request.policy,
+        &term,
+        request.cols,
+        request.rows,
+        &on_stage,
+    )
+    .await?;
 
     let session_id = new_id();
     session::spawn(

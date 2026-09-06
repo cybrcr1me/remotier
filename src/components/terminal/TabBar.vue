@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Button } from '@/components/ui/button'
+import { BAR_HEIGHT } from '@/lib/ui'
 import { cn } from '@/lib/utils'
 import { useSessionsStore } from '@/stores/sessions'
 import WorkspaceMenu from './WorkspaceMenu.vue'
@@ -13,7 +14,7 @@ const emit = defineEmits<{ newTab: [] }>()
 </script>
 
 <template>
-  <div class="flex h-9 shrink-0 items-stretch gap-1 border-b px-1">
+  <div :class="cn('flex shrink-0 items-stretch gap-1 border-b px-2 py-1.5', BAR_HEIGHT)">
     <div class="flex min-w-0 flex-1 items-stretch gap-1 overflow-x-auto">
       <div
         v-for="tab in tabs"

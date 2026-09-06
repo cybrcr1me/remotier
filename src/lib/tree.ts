@@ -122,3 +122,25 @@ export function treeHosts(nodes: TreeNode[]): Host[] {
 export function groupIds(nodes: TreeNode[]): string[] {
   return nodes.flatMap(node => (node.kind === 'group' ? [node.id, ...groupIds(node.children)] : []))
 }
+
+/** A host together with the group names above it, for the grid view. */
+export interface FlatHost {
+  host: Host
+  /** Outermost group first. Empty for an ungrouped host. */
+  groupPath: string[]
+}
+
+/**
+ * Flatten the tree to a list of hosts, keeping the group each one sits under.
+ *
+ * The grid has no nesting to show structure with, so the path is what tells the user
+ * where a host actually lives.
+ */
+export function flattenHosts(nodes: TreeNode[], groupPath: string[] = []): FlatHost[] {
+  return nodes.flatMap<FlatHost>((node) => {
+    if (node.kind === 'host') {
+      return [{ host: node.host, groupPath }]
+    }
+    return flattenHosts(node.children, [...groupPath, node.name])
+  })
+}

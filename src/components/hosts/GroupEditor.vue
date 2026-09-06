@@ -142,7 +142,12 @@ async function setValue(name: string, value: string) {
         <FieldGroup>
           <Field :data-invalid="nameInvalid ? '' : undefined">
             <FieldLabel for="group-name">Name</FieldLabel>
-            <Input id="group-name" v-model="form.name" :aria-invalid="nameInvalid ? true : undefined" />
+            <Input
+              id="group-name"
+              v-model="form.name"
+              placeholder="Production"
+              :aria-invalid="nameInvalid ? true : undefined"
+            />
           </Field>
 
           <Field>

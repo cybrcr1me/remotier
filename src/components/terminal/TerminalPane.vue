@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { Button } from '@/components/ui/button'
 import {
   Empty,
   EmptyDescription,
@@ -7,21 +6,30 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty'
-import { Spinner } from '@/components/ui/spinner'
+import ConnectionPanel from './ConnectionPanel.vue'
+import {
+  appendEntry,
+  describeStage,
+  errorEntry,
+  infoEntry,
+  type LogEntry,
+} from '@/lib/connection-log'
 import { connectWithHostKeyPrompt, type HostKeyPrompt } from '@/lib/connect-flow'
+import type { ConnectProgress } from '@/lib/types'
 import { useVarsStore } from '@/stores/vars'
 import { errorMessage, ipc } from '@/lib/ipc'
 import { readTerminalTheme, terminalFontFamily } from '@/lib/terminal-theme'
 import { useSessionsStore } from '@/stores/sessions'
 import { useSettingsStore } from '@/stores/settings'
 import { Channel } from '@tauri-apps/api/core'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { Terminal } from '@xterm/xterm'
-import { PlugZapIcon, TerminalIcon } from '@lucide/vue'
+import { TerminalIcon } from '@lucide/vue'
 import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import '@xterm/xterm/css/xterm.css'
 
@@ -48,6 +56,8 @@ const vars = useVarsStore()
 const host = ref<HTMLDivElement | null>(null)
 const status = ref<'idle' | 'connecting' | 'connected' | 'error'>('idle')
 const error = ref<string | null>(null)
+const log = ref<LogEntry[]>([])
+const target = ref<string | null>(null)
 
 // shallowRef: these are large, self-managing objects that must not be made reactive.
 const terminal = shallowRef<Terminal | null>(null)
@@ -117,13 +127,29 @@ async function connect() {
 
   status.value = 'connecting'
   error.value = null
+  log.value = []
+
+  // Correlates the progress events with this attempt; the session id does not exist yet.
+  const attemptId = `${props.paneId}-${Date.now()}`
+  let unlistenProgress: UnlistenFn | null = null
+
+  try {
+    unlistenProgress = await listen<ConnectProgress>('ssh://progress', ({ payload }) => {
+      if (payload.attemptId !== attemptId) return
+      if (payload.stage === 'connecting') target.value = `${payload.host}:${payload.port}`
+      log.value = appendEntry(log.value, infoEntry(describeStage(payload)))
+    })
+  } catch (e) {
+    // Losing progress reporting is not a reason to refuse to connect.
+    console.warn('could not subscribe to connection progress:', errorMessage(e))
+  }
 
   const onData = new Channel<ArrayBuffer>()
   onData.onmessage = (chunk) => term.write(new Uint8Array(chunk))
 
   try {
     const sessionId = await connectWithHostKeyPrompt({
-      request: { hostId: props.hostId, cols: term.cols, rows: term.rows },
+      request: { hostId: props.hostId, cols: term.cols, rows: term.rows, attemptId },
       connect: request => ipc.sshConnect(request, onData),
       askAboutHostKey: prompt =>
         new Promise(resolve => emit('hostKey', prompt, resolve)),
@@ -145,7 +171,9 @@ async function connect() {
   } catch (e) {
     status.value = 'error'
     error.value = errorMessage(e)
-    term.writeln(`\r\n\x1b[31m${error.value}\x1b[0m`)
+    log.value = appendEntry(log.value, errorEntry(error.value))
+  } finally {
+    unlistenProgress?.()
   }
 }
 
@@ -200,7 +228,7 @@ defineExpose({ focus: () => terminal.value?.focus(), connect })
     class="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-background"
     @mousedown="emit('focus')"
   >
-    <div v-show="hostId" ref="host" class="min-h-0 flex-1 px-2 pt-2" />
+    <div v-show="hostId" ref="host" class="isolate min-h-0 flex-1 px-2 pt-2" />
 
     <Empty v-if="!hostId" class="h-full">
       <EmptyHeader>
@@ -212,22 +240,13 @@ defineExpose({ focus: () => terminal.value?.focus(), connect })
       </EmptyHeader>
     </Empty>
 
-    <div
-      v-if="status === 'connecting'"
-      class="absolute inset-0 flex items-center justify-center gap-2 bg-background/80 text-sm text-muted-foreground"
-    >
-      <Spinner />
-      Connecting…
-    </div>
-
-    <div
-      v-else-if="status === 'idle' && hostId"
-      class="absolute inset-x-0 bottom-0 flex items-center justify-center border-t bg-background/95 p-2"
-    >
-      <Button size="sm" variant="secondary" @click="connect">
-        <PlugZapIcon data-icon="inline-start" />
-        Reconnect
-      </Button>
-    </div>
+    <ConnectionPanel
+      v-if="hostId && status !== 'connected'"
+      :status="status"
+      :entries="log"
+      :error="error"
+      :target="target"
+      @retry="connect"
+    />
   </div>
 </template>

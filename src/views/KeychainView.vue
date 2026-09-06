@@ -21,6 +21,7 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import ViewToolbar from '@/components/layout/ViewToolbar.vue'
 import KeyDialogs from '@/components/keys/KeyDialogs.vue'
 import { errorMessage, ipc } from '@/lib/ipc'
 import type { AgentKey, DiscoveredKey, SshKey } from '@/lib/types'
@@ -96,7 +97,7 @@ onMounted(loadExternal)
 
 <template>
   <div class="flex h-full min-h-0 flex-col">
-    <div class="flex shrink-0 items-center gap-2 border-b p-3">
+    <ViewToolbar>
       <p class="text-sm text-muted-foreground">
         Keys Remotier holds, plus the ones already on this machine.
       </p>
@@ -110,7 +111,7 @@ onMounted(loadExternal)
           Generate
         </Button>
       </div>
-    </div>
+    </ViewToolbar>
 
     <Tabs default-value="repository" class="min-h-0 flex-1">
       <TabsList class="mx-3 mt-3">
@@ -121,6 +122,7 @@ onMounted(loadExternal)
 
       <TabsContent value="repository" class="min-h-0">
         <ScrollArea v-if="keys.length" class="h-full">
+          <div class="px-3 py-3">
           <Table>
             <TableHeader>
               <TableRow>
@@ -153,6 +155,7 @@ onMounted(loadExternal)
               </TableRow>
             </TableBody>
           </Table>
+          </div>
         </ScrollArea>
 
         <Empty v-else class="h-full">
@@ -171,6 +174,7 @@ onMounted(loadExternal)
 
       <TabsContent value="system" class="min-h-0">
         <ScrollArea class="h-full">
+          <div class="px-3 py-3">
           <Table>
             <TableHeader>
               <TableRow>
@@ -205,11 +209,13 @@ onMounted(loadExternal)
           <p v-if="!systemKeys.length" class="p-6 text-center text-sm text-muted-foreground">
             No key pairs found in ~/.ssh.
           </p>
+          </div>
         </ScrollArea>
       </TabsContent>
 
       <TabsContent value="agent" class="min-h-0">
         <ScrollArea class="h-full">
+          <div class="px-3 py-3">
           <Table v-if="agentKeys.length">
             <TableHeader>
               <TableRow>
@@ -229,6 +235,7 @@ onMounted(loadExternal)
           <p v-else class="p-6 text-center text-sm text-muted-foreground">
             {{ agentError ?? 'The ssh-agent is not holding any keys.' }}
           </p>
+          </div>
         </ScrollArea>
       </TabsContent>
     </Tabs>

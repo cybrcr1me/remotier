@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { ConnectCancelled, connectWithHostKeyPrompt, HostKeyRejected } from './connect-flow'
 import type { ConnectRequest } from '@/lib/types'
 
-const request: ConnectRequest = { hostId: 'host-1', cols: 80, rows: 24 }
+const request: ConnectRequest = { hostId: 'host-1', cols: 80, rows: 24, attemptId: 'attempt-1' }
 
 function unknownHostKey() {
   return {

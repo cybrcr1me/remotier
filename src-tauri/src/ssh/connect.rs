@@ -8,6 +8,8 @@ use russh::keys::ssh_key::PublicKey;
 use russh::keys::PrivateKeyWithHashAlg;
 use russh::Channel as SshChannel;
 
+use serde::Serialize;
+
 use crate::error::{Error, Result};
 use crate::ssh::client::{Handler, HostKeyPolicy};
 use crate::ssh::known_hosts::Verdict;
@@ -22,6 +24,29 @@ pub struct Connection {
     pub handle: Handle<Handler>,
     pub channel: SshChannel<client::Msg>,
 }
+
+/// Progress reported while a connection is being established.
+///
+/// The UI shows these as they arrive, so a slow DNS lookup or a server that stalls during
+/// authentication looks different from an app that has simply frozen.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase", tag = "stage")]
+pub enum Stage {
+    /// Opening the TCP connection and performing the SSH handshake.
+    Connecting { host: String, port: u16 },
+    /// The server's key was accepted, with the fingerprint that was checked.
+    HostKeyAccepted { fingerprint: String },
+    /// Offering one authentication method.
+    Authenticating { method: String, username: String },
+    Authenticated { method: String },
+    /// Requesting the pseudo-terminal and shell.
+    OpeningShell { term: String },
+    Ready,
+}
+
+/// Called as each stage is reached. Reporting is best effort and never fails a connection.
+pub trait Progress: Fn(Stage) + Send + Sync {}
+impl<T: Fn(Stage) + Send + Sync> Progress for T {}
 
 /// Connect, authenticate, and open an interactive shell.
 ///
@@ -39,6 +64,7 @@ pub async fn open(
     term: &str,
     cols: u32,
     rows: u32,
+    progress: &impl Progress,
 ) -> Result<Connection> {
     let config = Arc::new(client::Config {
         keepalive_interval: Some(KEEPALIVE),
@@ -47,6 +73,11 @@ pub async fn open(
 
     let handler = Handler::new(target.hostname.clone(), target.port, policy);
     let observed = handler.observed();
+
+    progress(Stage::Connecting {
+        host: target.hostname.clone(),
+        port: target.port,
+    });
 
     let connecting = client::connect(config, (target.hostname.as_str(), target.port), handler);
     let mut handle = match tokio::time::timeout(CONNECT_TIMEOUT, connecting).await {
@@ -60,15 +91,44 @@ pub async fn open(
         }
     };
 
-    authenticate(&mut handle, target).await?;
+    if let Some(seen) = observed.lock().ok().and_then(|slot| slot.clone()) {
+        progress(Stage::HostKeyAccepted {
+            fingerprint: seen.fingerprint,
+        });
+    }
 
+    let method = auth_method_name(&target.auth);
+    progress(Stage::Authenticating {
+        method: method.to_string(),
+        username: target.username.clone(),
+    });
+    authenticate(&mut handle, target).await?;
+    progress(Stage::Authenticated {
+        method: method.to_string(),
+    });
+
+    progress(Stage::OpeningShell {
+        term: pick_term(term).to_string(),
+    });
     let channel = handle.channel_open_session().await?;
     channel
         .request_pty(true, pick_term(term), cols, rows, 0, 0, &[])
         .await?;
     channel.request_shell(true).await?;
 
+    progress(Stage::Ready);
     Ok(Connection { handle, channel })
+}
+
+/// Human-readable name for the method being offered, for the progress panel.
+fn auth_method_name(auth: &AuthMaterial) -> &'static str {
+    match auth {
+        AuthMaterial::Password(_) => "password",
+        AuthMaterial::Interactive(_) => "keyboard-interactive",
+        AuthMaterial::Key { .. } => "public key",
+        AuthMaterial::KeyPath { .. } => "public key (from disk)",
+        AuthMaterial::Agent { .. } => "ssh-agent",
+    }
 }
 
 fn pick_term(term: &str) -> &str {

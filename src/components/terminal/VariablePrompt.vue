@@ -46,7 +46,12 @@ function submit() {
           <FieldLabel :for="`prompt-${name}`">
             {{ name }}
           </FieldLabel>
-          <Input :id="`prompt-${name}`" v-model="values[name]" autocomplete="off" />
+          <Input
+            :id="`prompt-${name}`"
+            v-model="values[name]"
+            :placeholder="`Value for ${name}`"
+            autocomplete="off"
+          />
         </Field>
       </FieldGroup>
 

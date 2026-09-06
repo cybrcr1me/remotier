@@ -127,3 +127,20 @@ Two rules hold in both:
 
 A corrupt snapshot yields `null` and an empty workspace rather than throwing - losing the
 tab layout is acceptable, failing to start is not.
+
+## Packaging
+
+`src-tauri/tests/bundle_config.rs` guards the release config: versions agreeing across the
+three manifests, icons present and in the right binary format, the entitlements file
+existing, a non-default identifier, and a CSP that forbids remote scripts. These fail
+locally instead of during a release build on a platform nobody is watching.
+
+Icons are generated from `design/icon.svg` with `bunx tauri icon design/icon.svg -o
+src-tauri/icons` — regenerate rather than hand-editing the PNGs. ImageMagick renders that
+SVG badly (it drops gradients and strokes); `tauri icon` uses resvg and gets it right.
+
+Before tagging, run `scripts/check-version.sh`. See `docs/RELEASING.md`.
+
+Building bundles locally: run `bun run tauri build` from the repository root, never from
+`src-tauri/` (the `beforeBuildCommand` needs the root `package.json`). The `.dmg` step
+needs macOS Automation → Finder permission; the `.app` does not. See `docs/RELEASING.md`.

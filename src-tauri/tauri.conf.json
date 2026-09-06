@@ -29,16 +29,36 @@
       "csp": {
         "default-src": "'self'",
         "script-src": "'self'",
-        "style-src": ["'self'", "'unsafe-inline'"],
-        "img-src": ["'self'", "data:", "blob:"],
-        "font-src": ["'self'", "data:"],
-        "connect-src": ["'self'", "ipc:", "http://ipc.localhost"]
+        "style-src": [
+          "'self'",
+          "'unsafe-inline'"
+        ],
+        "img-src": [
+          "'self'",
+          "data:",
+          "blob:"
+        ],
+        "font-src": [
+          "'self'",
+          "data:"
+        ],
+        "connect-src": [
+          "'self'",
+          "ipc:",
+          "http://ipc.localhost"
+        ]
       }
     }
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": [
+      "app",
+      "dmg",
+      "nsis",
+      "deb",
+      "appimage"
+    ],
     "category": "DeveloperTool",
     "shortDescription": "Local-first SSH client",
     "icon": [
@@ -49,11 +69,24 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "minimumSystemVersion": "10.15"
+      "minimumSystemVersion": "10.15",
+      "entitlements": "entitlements.plist"
     },
     "linux": {
       "deb": {
-        "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0"]
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0"
+        ]
+      }
+    },
+    "longDescription": "Remotier is a local-first SSH client: hosts and groups with inherited defaults, a key repository that does not force you to import anything, and tabbed terminals with split panes.",
+    "copyright": "Copyright \u00a9 2026 Flexusma",
+    "publisher": "Flexusma",
+    "homepage": "https://github.com/flexusma/remotier",
+    "windows": {
+      "nsis": {
+        "installMode": "perMachine"
       }
     }
   }

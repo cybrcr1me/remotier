@@ -26,3 +26,6 @@ dist-ssr
 # Tauri
 src-tauri/target
 src-tauri/gen/schemas
+
+# Rasterised from design/icon.svg; regenerate with `bunx tauri icon`
+design/icon.png

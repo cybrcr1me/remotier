@@ -19,7 +19,8 @@ import {
   EmptyTitle,
 } from '@/components/ui/empty'
 import { Input } from '@/components/ui/input'
-import { ScrollArea } from '@/components/ui/scroll-area'
+import PageBody from '@/components/layout/PageBody.vue'
+import ViewToolbar from '@/components/layout/ViewToolbar.vue'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { errorMessage, ipc } from '@/lib/ipc'
 import type { KnownHostEntry } from '@/lib/types'
@@ -68,14 +69,14 @@ onMounted(load)
 
 <template>
   <div class="flex h-full min-h-0 flex-col">
-    <div class="flex shrink-0 items-center gap-2 border-b p-3">
+    <ViewToolbar>
       <Input v-model="search" placeholder="Search hosts or fingerprints…" class="max-w-sm" />
       <p class="ml-auto text-xs text-muted-foreground">
         Shared with OpenSSH: ~/.ssh/known_hosts
       </p>
-    </div>
+    </ViewToolbar>
 
-    <ScrollArea v-if="visible.length" class="min-h-0 flex-1">
+    <PageBody v-if="visible.length">
       <Table>
         <TableHeader>
           <TableRow>
@@ -106,7 +107,7 @@ onMounted(load)
           </TableRow>
         </TableBody>
       </Table>
-    </ScrollArea>
+    </PageBody>
 
     <Empty v-else class="flex-1">
       <EmptyHeader>

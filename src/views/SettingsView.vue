@@ -67,6 +67,7 @@ onMounted(async () => {
                 id="font-size"
                 :model-value="settings.get('terminal.fontSize')"
                 inputmode="numeric"
+                placeholder="13"
                 class="max-w-24"
                 @update:model-value="value => update('terminal.fontSize', String(value))"
               />
@@ -77,6 +78,7 @@ onMounted(async () => {
               <Input
                 id="term"
                 :model-value="settings.get('terminal.term')"
+                placeholder="xterm-256color"
                 class="max-w-64"
                 @update:model-value="value => update('terminal.term', String(value))"
               />
@@ -115,6 +117,7 @@ onMounted(async () => {
                 id="default-port"
                 :model-value="settings.get('ssh.defaultPort')"
                 inputmode="numeric"
+                placeholder="22"
                 class="max-w-24"
                 @update:model-value="value => update('ssh.defaultPort', String(value))"
               />
