@@ -126,6 +126,22 @@ CREATE INDEX idx_hosts_group ON hosts(group_id);
 CREATE INDEX idx_hosts_identity ON hosts(identity_id);
 CREATE INDEX idx_var_defs_scope ON var_defs(scope, scope_id);
 "#,
+    // 2 - credentials set directly on a host, for one-off servers that do not warrant
+    // an identity of their own. NULL auth_kind means "use the inherited identity".
+    r#"
+ALTER TABLE hosts ADD COLUMN username TEXT;
+ALTER TABLE hosts ADD COLUMN auth_kind TEXT
+    CHECK (auth_kind IS NULL OR auth_kind IN ('password', 'key', 'agent', 'interactive'));
+ALTER TABLE hosts ADD COLUMN password_ref TEXT REFERENCES secrets(ref) ON DELETE SET NULL;
+ALTER TABLE hosts ADD COLUMN key_id TEXT REFERENCES keys(id) ON DELETE SET NULL;
+"#,
+    // 3 - a small amount of visual identity, so a wall of hosts is scannable. Both are
+    // opaque keys resolved by the frontend, not colour values or asset paths.
+    r#"
+ALTER TABLE hosts ADD COLUMN icon TEXT;
+ALTER TABLE groups ADD COLUMN icon TEXT;
+ALTER TABLE groups ADD COLUMN color TEXT;
+"#,
 ];
 
 pub fn apply(conn: &mut Connection) -> Result<()> {
@@ -169,6 +185,68 @@ mod tests {
             )
             .unwrap();
         assert_eq!(tables, 1);
+    }
+
+    #[test]
+    fn host_credentials_columns_are_added() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        apply(&mut conn).unwrap();
+
+        let columns: Vec<String> = conn
+            .prepare("SELECT name FROM pragma_table_info('hosts')")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+
+        for column in ["username", "auth_kind", "password_ref", "key_id"] {
+            assert!(columns.contains(&column.to_string()), "missing hosts.{column}");
+        }
+    }
+
+    #[test]
+    fn appearance_columns_are_added() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        apply(&mut conn).unwrap();
+
+        let columns = |table: &str| -> Vec<String> {
+            conn.prepare(&format!("SELECT name FROM pragma_table_info('{table}')"))
+                .unwrap()
+                .query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<rusqlite::Result<_>>()
+                .unwrap()
+        };
+
+        assert!(columns("hosts").contains(&"icon".to_string()));
+        assert!(columns("groups").contains(&"icon".to_string()));
+        assert!(columns("groups").contains(&"color".to_string()));
+    }
+
+    #[test]
+    fn upgrades_an_existing_database_in_place() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        // Stop at the first migration, as an older install would be.
+        let tx = conn.transaction().unwrap();
+        tx.execute_batch(MIGRATIONS[0]).unwrap();
+        tx.pragma_update(None, "user_version", 1).unwrap();
+        tx.commit().unwrap();
+
+        conn.execute(
+            "INSERT INTO hosts (id, label, hostname, tags, sort, created_at, updated_at)
+             VALUES ('h1', 'old', 'old.example.com', '[]', 0, 0, 0)",
+            [],
+        )
+        .unwrap();
+
+        apply(&mut conn).unwrap();
+
+        // The existing row survives the upgrade and gains the new columns as NULL.
+        let username: Option<String> = conn
+            .query_row("SELECT username FROM hosts WHERE id = 'h1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(username, None);
     }
 
     #[test]

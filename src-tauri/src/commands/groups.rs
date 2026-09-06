@@ -16,6 +16,8 @@ pub struct GroupInput {
     pub default_port: Option<i64>,
     pub default_identity_id: Option<String>,
     pub default_jump_host_id: Option<String>,
+    pub icon: Option<String>,
+    pub color: Option<String>,
 }
 
 #[tauri::command(async)]
@@ -39,8 +41,8 @@ pub fn create_group(state: State<'_, AppState>, input: GroupInput) -> Result<Gro
     state.db.write(|tx| {
         tx.execute(
             "INSERT INTO groups (id, parent_id, name, sort, default_port, default_identity_id,
-                                 default_jump_host_id, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+                                 default_jump_host_id, icon, color, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
             params![
                 id,
                 input.parent_id,
@@ -49,6 +51,8 @@ pub fn create_group(state: State<'_, AppState>, input: GroupInput) -> Result<Gro
                 input.default_port,
                 input.default_identity_id,
                 input.default_jump_host_id,
+                input.icon,
+                input.color,
                 now,
             ],
         )?;
@@ -70,7 +74,8 @@ pub fn update_group(state: State<'_, AppState>, id: String, input: GroupInput) -
     let changed = state.db.write(|tx| {
         Ok(tx.execute(
             "UPDATE groups SET parent_id = ?2, name = ?3, sort = ?4, default_port = ?5,
-                    default_identity_id = ?6, default_jump_host_id = ?7, updated_at = ?8
+                    default_identity_id = ?6, default_jump_host_id = ?7, icon = ?8,
+                    color = ?9, updated_at = ?10
              WHERE id = ?1",
             params![
                 id,
@@ -80,6 +85,8 @@ pub fn update_group(state: State<'_, AppState>, id: String, input: GroupInput) -
                 input.default_port,
                 input.default_identity_id,
                 input.default_jump_host_id,
+                input.icon,
+                input.color,
                 now_ms(),
             ],
         )?)

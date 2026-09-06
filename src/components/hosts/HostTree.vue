@@ -9,7 +9,8 @@ import {
 } from '@/components/ui/context-menu'
 import { cn } from '@/lib/utils'
 import type { TreeNode } from '@/lib/tree'
-import { ChevronRightIcon, FolderIcon, ServerIcon } from '@lucide/vue'
+import { colorBorder, groupIcon, hasColor, hostIcon } from '@/lib/appearance'
+import { ChevronRightIcon } from '@lucide/vue'
 
 defineOptions({ name: 'HostTree' })
 
@@ -59,14 +60,30 @@ const depth = props.depth ?? 0
                   :class="cn('transition-transform', props.expanded.has(node.id) && 'rotate-90')"
                 />
               </Button>
-              <FolderIcon class="size-4 shrink-0 text-muted-foreground" />
-              <span class="truncate">{{ node.name }}</span>
+              <component
+                :is="groupIcon(node.group.icon)"
+                :class="cn(
+                  'size-4 shrink-0 text-muted-foreground',
+                  hasColor(node.group.color) && 'text-foreground',
+                )"
+              />
+              <span
+                :class="cn(
+                  'truncate',
+                  hasColor(node.group.color) && `border-l-2 pl-2 ${colorBorder(node.group.color)}`,
+                )"
+              >{{ node.name }}</span>
             </template>
 
             <template v-else>
               <span class="w-5 shrink-0" />
-              <ServerIcon class="size-4 shrink-0 text-muted-foreground" />
-              <span class="truncate">{{ node.host.label }}</span>
+              <component :is="hostIcon(node.host.icon)" class="size-4 shrink-0 text-muted-foreground" />
+              <span
+                :class="cn(
+                  'truncate',
+                  hasColor(node.host.color) && `border-l-2 pl-2 ${colorBorder(node.host.color)}`,
+                )"
+              >{{ node.host.label }}</span>
               <span class="ml-auto truncate text-xs text-muted-foreground">
                 {{ node.host.hostname }}
               </span>

@@ -19,9 +19,14 @@ import {
 } from '@/components/ui/empty'
 import QuickConnect from '@/components/terminal/QuickConnect.vue'
 import SplitView from '@/components/terminal/SplitView.vue'
+import PasswordPrompt from '@/components/terminal/PasswordPrompt.vue'
 import VariablePrompt from '@/components/terminal/VariablePrompt.vue'
 import TabBar from '@/components/terminal/TabBar.vue'
-import type { HostKeyDecision, HostKeyPrompt } from '@/lib/connect-flow'
+import type {
+  HostKeyDecision,
+  HostKeyPrompt,
+  PasswordPrompt as PasswordPromptData,
+} from '@/lib/connect-flow'
 import { useTerminalShortcuts } from '@/lib/shortcuts'
 import type { SessionEvent } from '@/lib/types'
 import { useInventoryStore } from '@/stores/inventory'
@@ -43,6 +48,25 @@ let hostKeyDecide: ((choice: HostKeyDecision) => void) | null = null
 function askAboutHostKey(prompt: HostKeyPrompt, decide: (choice: HostKeyDecision) => void) {
   hostKeyPrompt.value = prompt
   hostKeyDecide = decide
+}
+
+type PasswordAnswer = { password: string, remember: boolean } | null
+
+const passwordPrompt = ref<PasswordPromptData | null>(null)
+let passwordDecide: ((answer: PasswordAnswer) => void) | null = null
+
+function askForPassword(
+  prompt: PasswordPromptData,
+  decide: (answer: PasswordAnswer) => void,
+) {
+  passwordPrompt.value = prompt
+  passwordDecide = decide
+}
+
+function answerPassword(answer: PasswordAnswer) {
+  passwordPrompt.value = null
+  passwordDecide?.(answer)
+  passwordDecide = null
 }
 
 const variableNames = ref<string[]>([])
@@ -128,6 +152,7 @@ onBeforeUnmount(() => unlisten?.())
         @resize="(splitId, sizes) => sessions.setSizes(activeTab!.id, splitId, sizes)"
         @host-key="askAboutHostKey"
         @variables="askAboutVariables"
+        @password="askForPassword"
       />
     </div>
 
@@ -150,6 +175,12 @@ onBeforeUnmount(() => unlisten?.())
       :names="variableNames"
       @submit="answerVariables"
       @cancel="answerVariables(null)"
+    />
+
+    <PasswordPrompt
+      :prompt="passwordPrompt"
+      @submit="(password, remember) => answerPassword({ password, remember })"
+      @cancel="answerPassword(null)"
     />
 
     <AlertDialog :open="hostKeyPrompt !== null">

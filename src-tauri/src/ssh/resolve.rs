@@ -202,18 +202,22 @@ fn resolve_common(db: &Db, host_id: &str) -> Result<Resolution> {
 
     let values = variable_values(db, &host, &chain)?;
 
-    // The username template lives on the identity and may itself contain placeholders.
-    let raw_username = db.read(|conn| match identity_id.as_deref() {
-        Some(id) => query_one(
-            conn,
-            "SELECT username FROM identities WHERE id = ?1",
-            params![id],
-            |row| Ok(row.get::<_, String>(0)?),
-            "identity",
-            id,
-        ),
-        None => Ok(whoami()),
-    })?;
+    // A username set on the host wins over the identity's, so a one-off server can be
+    // reached without inventing an identity for it. Both may contain placeholders.
+    let raw_username = match host.username.clone().filter(|u| !u.trim().is_empty()) {
+        Some(username) => username,
+        None => db.read(|conn| match identity_id.as_deref() {
+            Some(id) => query_one(
+                conn,
+                "SELECT username FROM identities WHERE id = ?1",
+                params![id],
+                |row| Ok(row.get::<_, String>(0)?),
+                "identity",
+                id,
+            ),
+            None => Ok(whoami()),
+        })?,
+    };
 
     let mut missing = vars::missing(&host.hostname, &values);
     missing.extend(vars::missing(&raw_username, &values));
@@ -253,17 +257,42 @@ pub fn preview(db: &Db, host_id: &str) -> Result<TargetPreview> {
         None => None,
     };
 
+    // Credentials on the host itself take precedence over the inherited identity.
+    let host_auth = resolution.host.auth_kind;
+    let key_label = match resolution.host.key_id.clone() {
+        Some(key_id) if host_auth.is_some() => db
+            .read(|conn| {
+                query_one(
+                    conn,
+                    "SELECT label FROM keys WHERE id = ?1",
+                    params![key_id],
+                    |row| Ok(row.get::<_, String>(0)?),
+                    "key",
+                    &key_id,
+                )
+            })
+            .ok(),
+        _ => key_label,
+    };
+
     Ok(TargetPreview {
         host_id: resolution.host.id,
         label: resolution.host.label,
         hostname: resolution.hostname,
         port: resolution.port,
         username: resolution.username,
-        auth_kind: resolution
-            .identity
-            .as_ref()
-            .map_or(AuthKind::Agent, |i| i.auth_kind),
-        identity_label: resolution.identity.map(|i| i.label),
+        auth_kind: host_auth.unwrap_or_else(|| {
+            resolution
+                .identity
+                .as_ref()
+                .map_or(AuthKind::Agent, |i| i.auth_kind)
+        }),
+        identity_label: if host_auth.is_some() {
+            // Say plainly that the host is not using an identity at all.
+            None
+        } else {
+            resolution.identity.map(|i| i.label)
+        },
         key_label,
         missing_variables: resolution.missing,
     })
@@ -275,11 +304,37 @@ pub fn preview(db: &Db, host_id: &str) -> Result<TargetPreview> {
 ///
 /// [`Error::UnresolvedVariables`] when a placeholder has no value, so the UI can collect
 /// them before a connection is attempted rather than after it fails to authenticate.
-pub fn target(db: &Db, vault: &Vault, host_id: &str) -> Result<Target> {
+pub fn target(
+    db: &Db,
+    vault: &Vault,
+    host_id: &str,
+    supplied_password: Option<&str>,
+) -> Result<Target> {
     let resolution = resolve_common(db, host_id)?;
 
     if !resolution.missing.is_empty() {
         return Err(Error::UnresolvedVariables(resolution.missing));
+    }
+
+    // Credentials set directly on the host win outright.
+    if let Some(auth_kind) = resolution.host.auth_kind {
+        let auth = host_auth_material(
+            db,
+            vault,
+            &resolution.host,
+            auth_kind,
+            supplied_password,
+            &resolution.username,
+            &resolution.hostname,
+        )?;
+        return Ok(Target {
+            host_id: resolution.host.id,
+            label: resolution.host.label,
+            hostname: resolution.hostname,
+            port: resolution.port,
+            username: resolution.username,
+            auth,
+        });
     }
 
     let auth = match &resolution.identity {
@@ -292,10 +347,22 @@ pub fn target(db: &Db, vault: &Vault, host_id: &str) -> Result<Target> {
             };
 
             match identity.auth_kind {
-                AuthKind::Password => AuthMaterial::Password(
-                    password.ok_or_else(|| Error::Auth("no password stored for this identity".into()))?,
+                // Nothing stored means the user is asked once, and it is used for this
+                // connection only. Storing a password must stay optional.
+                AuthKind::Password => AuthMaterial::Password(match password {
+                    Some(password) => password,
+                    None => Zeroizing::new(
+                        supplied_password
+                            .ok_or_else(|| Error::PasswordRequired {
+                                username: resolution.username.clone(),
+                                host: format!("{}:{}", resolution.hostname, resolution.port),
+                            })?
+                            .to_string(),
+                    ),
+                }),
+                AuthKind::Interactive => AuthMaterial::Interactive(
+                    password.or_else(|| supplied_password.map(|p| Zeroizing::new(p.to_string()))),
                 ),
-                AuthKind::Interactive => AuthMaterial::Interactive(password),
                 AuthKind::Agent => AuthMaterial::Agent {
                     public_openssh: key_public(db, identity.key_id.as_deref())?,
                 },
@@ -311,6 +378,59 @@ pub fn target(db: &Db, vault: &Vault, host_id: &str) -> Result<Target> {
         port: resolution.port,
         username: resolution.username,
         auth,
+    })
+}
+
+/// Build credentials from the fields stored on the host itself.
+#[allow(clippy::too_many_arguments)]
+fn host_auth_material(
+    db: &Db,
+    vault: &Vault,
+    host: &Host,
+    auth_kind: AuthKind,
+    supplied_password: Option<&str>,
+    username: &str,
+    hostname: &str,
+) -> Result<AuthMaterial> {
+    let password = match host_password_ref(db, &host.id)? {
+        Some(reference) => Some(db.read(|conn| secrets::get(conn, vault, &reference))?),
+        None => None,
+    };
+
+    match auth_kind {
+        // A host with no stored password is prompted for, not refused: saving the
+        // password has to stay optional.
+        AuthKind::Password => Ok(AuthMaterial::Password(match password {
+            Some(password) => password,
+            None => Zeroizing::new(
+                supplied_password
+                    .ok_or_else(|| Error::PasswordRequired {
+                        username: username.to_string(),
+                        host: hostname.to_string(),
+                    })?
+                    .to_string(),
+            ),
+        })),
+        AuthKind::Interactive => Ok(AuthMaterial::Interactive(
+            password.or_else(|| supplied_password.map(|p| Zeroizing::new(p.to_string()))),
+        )),
+        AuthKind::Agent => Ok(AuthMaterial::Agent {
+            public_openssh: key_public(db, host.key_id.as_deref())?,
+        }),
+        AuthKind::Key => key_material(db, vault, host.key_id.as_deref()),
+    }
+}
+
+fn host_password_ref(db: &Db, host_id: &str) -> Result<Option<String>> {
+    db.read(|conn| {
+        Ok(conn
+            .query_row(
+                "SELECT password_ref FROM hosts WHERE id = ?1",
+                params![host_id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .ok()
+            .flatten())
     })
 }
 

@@ -87,6 +87,37 @@ export const useInventoryStore = defineStore('inventory', () => {
     return host
   }
 
+  /**
+   * Store a password answered at a prompt against the host.
+   *
+   * Switches the host to its own password credentials, since that is what the user just
+   * supplied - leaving it pointing at an identity would discard the password next time.
+   */
+  async function updateHostPassword(id: string, password: string) {
+    const host = hostById.value.get(id)
+    if (!host) return
+
+    const updated = await ipc.updateHost(id, {
+      label: host.label,
+      hostname: host.hostname,
+      groupId: host.groupId,
+      port: host.port,
+      jumpHostId: host.jumpHostId,
+      color: host.color,
+      tags: host.tags,
+      sort: host.sort,
+      identityId: null,
+      username: host.username ?? null,
+      authKind: 'password',
+      password,
+      keyId: host.keyId,
+    })
+
+    const index = hosts.value.findIndex(h => h.id === id)
+    if (index !== -1) hosts.value[index] = updated
+    return updated
+  }
+
   async function deleteHost(id: string) {
     await ipc.deleteHost(id)
     hosts.value = hosts.value.filter(h => h.id !== id)
@@ -115,6 +146,7 @@ export const useInventoryStore = defineStore('inventory', () => {
     deleteGroup,
     createHost,
     updateHost,
+    updateHostPassword,
     deleteHost,
     moveHosts,
   }

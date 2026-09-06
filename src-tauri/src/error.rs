@@ -33,6 +33,8 @@ pub enum Error {
     },
     #[error("no such session: {0}")]
     NoSession(String),
+    #[error("a password is required for {username}@{host}")]
+    PasswordRequired { username: String, host: String },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -78,6 +80,7 @@ impl Error {
             Error::UnknownHostKey { .. } => "unknownHostKey",
             Error::ChangedHostKey { .. } => "changedHostKey",
             Error::NoSession(_) => "noSession",
+            Error::PasswordRequired { .. } => "passwordRequired",
         }
     }
 }
@@ -98,6 +101,10 @@ impl Serialize for Error {
             Error::UnknownHostKey { host, fingerprint } => {
                 map.serialize_entry("host", host)?;
                 map.serialize_entry("fingerprint", fingerprint)?;
+            }
+            Error::PasswordRequired { username, host } => {
+                map.serialize_entry("username", username)?;
+                map.serialize_entry("host", host)?;
             }
             Error::ChangedHostKey {
                 host,
@@ -153,6 +160,19 @@ mod tests {
 
         assert_eq!(value["kind"], "unresolvedVariables");
         assert_eq!(value["variables"], serde_json::json!(["wg_user", "target"]));
+    }
+
+    #[test]
+    fn asks_for_a_password_with_enough_context_to_prompt() {
+        let value = json(&Error::PasswordRequired {
+            username: "root".into(),
+            host: "example.com:22".into(),
+        });
+
+        // The prompt has to say who it is asking for, on which host.
+        assert_eq!(value["kind"], "passwordRequired");
+        assert_eq!(value["username"], "root");
+        assert_eq!(value["host"], "example.com:22");
     }
 
     #[test]

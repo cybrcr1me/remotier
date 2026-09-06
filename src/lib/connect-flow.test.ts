@@ -219,3 +219,106 @@ describe('unresolved variables', () => {
     ).rejects.toMatchObject({ kind: 'unresolvedVariables' })
   })
 })
+
+describe('password prompt', () => {
+  function passwordRequired() {
+    return {
+      kind: 'passwordRequired',
+      message: 'a password is required',
+      username: 'root',
+      host: 'example.com:22',
+    }
+  }
+
+  it('asks for a password and retries with it', async () => {
+    const connect = vi.fn()
+      .mockRejectedValueOnce(passwordRequired())
+      .mockResolvedValueOnce('session-1')
+    const askForPassword = vi.fn(async () => 'hunter2')
+
+    const sessionId = await connectWithHostKeyPrompt({
+      request,
+      connect,
+      askAboutHostKey: async () => 'reject',
+      askForPassword,
+    })
+
+    expect(sessionId).toBe('session-1')
+    expect(askForPassword).toHaveBeenCalledExactlyOnceWith({
+      username: 'root',
+      host: 'example.com:22',
+    })
+    expect(connect).toHaveBeenLastCalledWith(expect.objectContaining({ password: 'hunter2' }))
+  })
+
+  it('gives up when the prompt is cancelled', async () => {
+    const connect = vi.fn().mockRejectedValueOnce(passwordRequired())
+
+    await expect(
+      connectWithHostKeyPrompt({
+        request,
+        connect,
+        askAboutHostKey: async () => 'reject',
+        askForPassword: async () => null,
+      }),
+    ).rejects.toBeInstanceOf(ConnectCancelled)
+
+    expect(connect).toHaveBeenCalledOnce()
+  })
+
+  it('accepts an empty password rather than treating it as a cancel', async () => {
+    const connect = vi.fn()
+      .mockRejectedValueOnce(passwordRequired())
+      .mockResolvedValueOnce('session-1')
+
+    // Some servers accept an empty password; only null means cancelled.
+    await connectWithHostKeyPrompt({
+      request,
+      connect,
+      askAboutHostKey: async () => 'reject',
+      askForPassword: async () => '',
+    })
+
+    expect(connect).toHaveBeenLastCalledWith(expect.objectContaining({ password: '' }))
+  })
+
+  it('asks only once, then surfaces the failure', async () => {
+    const connect = vi.fn().mockRejectedValue(passwordRequired())
+    const askForPassword = vi.fn(async () => 'wrong')
+
+    await expect(
+      connectWithHostKeyPrompt({
+        request,
+        connect,
+        askAboutHostKey: async () => 'reject',
+        askForPassword,
+      }),
+    ).rejects.toMatchObject({ kind: 'passwordRequired' })
+
+    expect(askForPassword).toHaveBeenCalledOnce()
+  })
+
+  it('handles a host needing a password and then trust', async () => {
+    const connect = vi.fn()
+      .mockRejectedValueOnce(passwordRequired())
+      .mockRejectedValueOnce(unknownHostKey())
+      .mockResolvedValueOnce('session-1')
+
+    const sessionId = await connectWithHostKeyPrompt({
+      request,
+      connect,
+      askAboutHostKey: async () => 'save',
+      askForPassword: async () => 'hunter2',
+    })
+
+    expect(sessionId).toBe('session-1')
+  })
+
+  it('propagates the request when no prompt is wired up', async () => {
+    const connect = vi.fn().mockRejectedValueOnce(passwordRequired())
+
+    await expect(
+      connectWithHostKeyPrompt({ request, connect, askAboutHostKey: async () => 'reject' }),
+    ).rejects.toMatchObject({ kind: 'passwordRequired' })
+  })
+})

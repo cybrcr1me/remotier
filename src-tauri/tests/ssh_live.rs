@@ -234,7 +234,7 @@ async fn resolves_a_stored_host_and_connects_with_its_sealed_password() {
     })
     .unwrap();
 
-    let resolved = resolve::target(&db, &vault, &host_id).expect("resolve the stored host");
+    let resolved = resolve::target(&db, &vault, &host_id, None).expect("resolve the stored host");
     assert_eq!(resolved.port, PORT, "the port must be inherited from the group");
 
     let connection = connect::open(&resolved, HostKeyPolicy::TrustOnce, "xterm-256color", 80, 24, &|_| {})
@@ -301,7 +301,7 @@ async fn connects_through_a_group_with_a_username_placeholder() {
     // Without a value the connection must be refused, naming what is missing.
     let preview = resolve::preview(&db, &host_id).unwrap();
     assert_eq!(preview.missing_variables, vec!["wg_user"]);
-    assert!(resolve::target(&db, &vault, &host_id).is_err());
+    assert!(resolve::target(&db, &vault, &host_id, None).is_err());
 
     // This user's own answer, stored locally.
     db.write(|tx| {
@@ -314,7 +314,7 @@ async fn connects_through_a_group_with_a_username_placeholder() {
     })
     .unwrap();
 
-    let target = resolve::target(&db, &vault, &host_id).expect("resolve after filling the variable");
+    let target = resolve::target(&db, &vault, &host_id, None).expect("resolve after filling the variable");
     assert_eq!(target.username, USER, "the placeholder must be substituted");
     assert_eq!(target.port, PORT);
 
@@ -395,4 +395,51 @@ async fn reports_stages_up_to_the_point_of_failure() {
         !stages.iter().any(|s| s.starts_with("Authenticated")),
         "must not report success: {stages:?}"
     );
+}
+
+/// Credentials on the host, with no identity anywhere: the one-off server case.
+#[tokio::test]
+#[ignore = "needs the dockerised sshd"]
+async fn connects_with_credentials_set_directly_on_the_host() {
+    use remotier_lib::commands::secrets;
+    use remotier_lib::crypto::vault::Vault;
+    use remotier_lib::db::{new_id, now_ms, Db};
+    use remotier_lib::ssh::resolve;
+
+    let dir = std::env::temp_dir().join(format!("remotier-hostcreds-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let db = Db::open(&dir.join("hostcreds.db")).unwrap();
+    let vault = Vault::from_key(&[17u8; 32]).unwrap();
+
+    let host_id = new_id();
+    db.write(|tx| {
+        let now = now_ms();
+        let password_ref = secrets::put(tx, &vault, None, PASSWORD)?;
+        tx.execute(
+            "INSERT INTO hosts (id, label, hostname, port, tags, sort, username, auth_kind,
+                                password_ref, created_at, updated_at)
+             VALUES (?1, 'one-off', ?2, ?3, '[]', 0, ?4, 'password', ?5, ?6, ?6)",
+            rusqlite::params![host_id, HOST, i64::from(PORT), USER, password_ref, now],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+
+    // No identities table entry exists at all.
+    let identities: i64 = db
+        .read(|conn| Ok(conn.query_row("SELECT count(*) FROM identities", [], |r| r.get(0))?))
+        .unwrap();
+    assert_eq!(identities, 0);
+
+    let target = resolve::target(&db, &vault, &host_id, None).expect("resolve host credentials");
+    assert_eq!(target.username, USER);
+
+    let connection = connect::open(&target, HostKeyPolicy::TrustOnce, "xterm-256color", 80, 24, &|_| {})
+        .await
+        .expect("connect with host credentials");
+
+    let output = shell_roundtrip(connection).await;
+    assert!(output.contains("remotier-ok"), "shell output was: {output}");
+
+    std::fs::remove_dir_all(&dir).ok();
 }

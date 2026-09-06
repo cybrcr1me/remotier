@@ -226,7 +226,7 @@ fn connecting_is_refused_while_a_variable_is_unresolved() {
     let host = f.host("{{env}}.example.com", None, None, None);
     f.declare_var("host", &host, "env", None, true);
 
-    match resolve::target(&f.db, &f.vault, &host) {
+    match resolve::target(&f.db, &f.vault, &host, None) {
         Err(Error::UnresolvedVariables(names)) => assert_eq!(names, vec!["env"]),
         other => panic!("expected UnresolvedVariables, got {other:?}", other = other.map(|_| "a target")),
     }
@@ -238,7 +238,7 @@ fn the_stored_password_is_decrypted_for_the_connection() {
     let identity = f.identity("deploy", Some("hunter2"));
     let host = f.host("example.com", None, None, Some(&identity));
 
-    let target = resolve::target(&f.db, &f.vault, &host).unwrap();
+    let target = resolve::target(&f.db, &f.vault, &host, None).unwrap();
 
     assert_eq!(target.username, "deploy");
     match target.auth {
@@ -252,7 +252,7 @@ fn a_host_with_no_identity_falls_back_to_the_agent() {
     let f = Fixture::new("no-identity");
     let host = f.host("example.com", None, None, None);
 
-    let target = resolve::target(&f.db, &f.vault, &host).unwrap();
+    let target = resolve::target(&f.db, &f.vault, &host, None).unwrap();
 
     assert!(matches!(target.auth, AuthMaterial::Agent { .. }));
 }
@@ -276,4 +276,234 @@ fn a_cycle_in_the_group_chain_does_not_hang() {
     let host = f.host("example.com", Some(&a), None, None);
 
     assert_eq!(resolve::preview(&f.db, &host).unwrap().port, 2222);
+}
+
+// --- Credentials set directly on a host, instead of an identity ---
+
+impl Fixture {
+    fn host_with_credentials(
+        &self,
+        hostname: &str,
+        username: &str,
+        auth_kind: &str,
+        password: Option<&str>,
+    ) -> String {
+        let id = new_id();
+        self.db
+            .write(|tx| {
+                let password_ref = match password {
+                    Some(password) => Some(secrets::put(tx, &self.vault, None, password)?),
+                    None => None,
+                };
+                tx.execute(
+                    "INSERT INTO hosts (id, label, hostname, tags, sort, username, auth_kind,
+                                        password_ref, created_at, updated_at)
+                     VALUES (?1, 'host', ?2, '[]', 0, ?3, ?4, ?5, ?6, ?6)",
+                    rusqlite::params![id, hostname, username, auth_kind, password_ref, now_ms()],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        id
+    }
+}
+
+#[test]
+fn a_host_can_carry_its_own_username_and_password() {
+    let f = Fixture::new("host-creds");
+    let host = f.host_with_credentials("example.com", "root", "password", Some("hunter2"));
+
+    let target = resolve::target(&f.db, &f.vault, &host, None).unwrap();
+
+    assert_eq!(target.username, "root");
+    match target.auth {
+        AuthMaterial::Password(password) => assert_eq!(*password, "hunter2"),
+        _ => panic!("expected password auth from the host's own credentials"),
+    }
+}
+
+#[test]
+fn host_credentials_beat_an_inherited_identity() {
+    let f = Fixture::new("host-beats-identity");
+    let identity = f.identity("from-identity", Some("identity-password"));
+    let group = f.group("g", None, None, Some(&identity));
+
+    let host = f.host_with_credentials("example.com", "from-host", "password", Some("host-password"));
+    f.db.write(|tx| {
+        tx.execute(
+            "UPDATE hosts SET group_id = ?2 WHERE id = ?1",
+            rusqlite::params![host, group],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+
+    let target = resolve::target(&f.db, &f.vault, &host, None).unwrap();
+
+    // The host is explicit; the inherited identity must not override it.
+    assert_eq!(target.username, "from-host");
+    match target.auth {
+        AuthMaterial::Password(password) => assert_eq!(*password, "host-password"),
+        _ => panic!("expected the host's own password"),
+    }
+}
+
+#[test]
+fn a_host_username_without_its_own_auth_still_overrides_the_identity_username() {
+    let f = Fixture::new("username-only");
+    let identity = f.identity("identity-user", Some("pw"));
+    let host = f.host("example.com", None, None, Some(&identity));
+
+    f.db.write(|tx| {
+        tx.execute(
+            "UPDATE hosts SET username = 'override' WHERE id = ?1",
+            rusqlite::params![host],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+
+    let target = resolve::target(&f.db, &f.vault, &host, None).unwrap();
+
+    assert_eq!(target.username, "override");
+    // Authentication still comes from the identity, only the username was overridden.
+    assert!(matches!(target.auth, AuthMaterial::Password(_)));
+}
+
+#[test]
+fn a_host_set_to_agent_auth_needs_no_identity() {
+    let f = Fixture::new("host-agent");
+    let host = f.host_with_credentials("example.com", "deploy", "agent", None);
+
+    let target = resolve::target(&f.db, &f.vault, &host, None).unwrap();
+
+    assert_eq!(target.username, "deploy");
+    assert!(matches!(target.auth, AuthMaterial::Agent { .. }));
+}
+
+#[test]
+fn placeholders_work_in_a_host_username() {
+    let f = Fixture::new("host-placeholder");
+    let host = f.host_with_credentials("example.com", "{{wg_user}}", "agent", None);
+    f.declare_var("host", &host, "wg_user", None, true);
+    f.set_var("host", &host, "wg_user", "flex");
+
+    assert_eq!(resolve::preview(&f.db, &host).unwrap().username, "flex");
+}
+
+#[test]
+fn preview_reports_host_credentials_rather_than_an_identity() {
+    let f = Fixture::new("preview-host-creds");
+    let identity = f.identity("unused", Some("pw"));
+    let group = f.group("g", None, None, Some(&identity));
+    let host = f.host_with_credentials("example.com", "root", "password", Some("hunter2"));
+
+    f.db.write(|tx| {
+        tx.execute(
+            "UPDATE hosts SET group_id = ?2 WHERE id = ?1",
+            rusqlite::params![host, group],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+
+    let preview = resolve::preview(&f.db, &host).unwrap();
+
+    assert_eq!(preview.auth_kind, remotier_lib::db::models::AuthKind::Password);
+    // The UI should not claim an identity is in use when it is being bypassed.
+    assert_eq!(preview.identity_label, None);
+}
+
+#[test]
+fn a_host_with_password_auth_and_no_stored_password_asks_for_one() {
+    let f = Fixture::new("ask-host");
+    let host = f.host_with_credentials("example.com", "root", "password", None);
+
+    match resolve::target(&f.db, &f.vault, &host, None) {
+        Err(Error::PasswordRequired { username, host }) => {
+            // Enough context for the prompt to say who it is asking for.
+            assert_eq!(username, "root");
+            assert_eq!(host, "example.com");
+        }
+        other => panic!("expected PasswordRequired, got {:?}", other.map(|_| "a target")),
+    }
+}
+
+#[test]
+fn a_supplied_password_satisfies_a_host_that_stores_none() {
+    let f = Fixture::new("supplied-host");
+    let host = f.host_with_credentials("example.com", "root", "password", None);
+
+    let target = resolve::target(&f.db, &f.vault, &host, Some("typed-in")).unwrap();
+
+    match target.auth {
+        AuthMaterial::Password(password) => assert_eq!(*password, "typed-in"),
+        _ => panic!("expected password auth"),
+    }
+}
+
+#[test]
+fn an_identity_with_password_auth_and_no_stored_password_asks_for_one() {
+    let f = Fixture::new("ask-identity");
+    let identity = f.identity("deploy", None);
+    // `identity()` only stores a password when given one; force password auth without it.
+    f.db.write(|tx| {
+        tx.execute(
+            "UPDATE identities SET auth_kind = 'password' WHERE id = ?1",
+            rusqlite::params![identity],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+    let host = f.host("example.com", None, None, Some(&identity));
+
+    match resolve::target(&f.db, &f.vault, &host, None) {
+        Err(Error::PasswordRequired { username, .. }) => assert_eq!(username, "deploy"),
+        other => panic!("expected PasswordRequired, got {:?}", other.map(|_| "a target")),
+    }
+}
+
+#[test]
+fn a_supplied_password_satisfies_an_identity_that_stores_none() {
+    let f = Fixture::new("supplied-identity");
+    let identity = f.identity("deploy", None);
+    f.db.write(|tx| {
+        tx.execute(
+            "UPDATE identities SET auth_kind = 'password' WHERE id = ?1",
+            rusqlite::params![identity],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+    let host = f.host("example.com", None, None, Some(&identity));
+
+    let target = resolve::target(&f.db, &f.vault, &host, Some("typed-in")).unwrap();
+
+    match target.auth {
+        AuthMaterial::Password(password) => assert_eq!(*password, "typed-in"),
+        _ => panic!("expected password auth"),
+    }
+}
+
+#[test]
+fn a_stored_password_is_preferred_over_a_supplied_one() {
+    let f = Fixture::new("stored-wins");
+    let host = f.host_with_credentials("example.com", "root", "password", Some("stored"));
+
+    let target = resolve::target(&f.db, &f.vault, &host, Some("typed-in")).unwrap();
+
+    match target.auth {
+        AuthMaterial::Password(password) => assert_eq!(*password, "stored"),
+        _ => panic!("expected password auth"),
+    }
+}
+
+#[test]
+fn keyboard_interactive_never_demands_a_stored_password() {
+    let f = Fixture::new("interactive-no-password");
+    let host = f.host_with_credentials("example.com", "root", "interactive", None);
+
+    // The server does the asking here, so an empty secret is a valid starting point.
+    let target = resolve::target(&f.db, &f.vault, &host, None).unwrap();
+    assert!(matches!(target.auth, AuthMaterial::Interactive(None)));
 }

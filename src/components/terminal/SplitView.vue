@@ -22,6 +22,10 @@ const emit = defineEmits<{
   resize: [splitId: string, sizes: number[]]
   hostKey: [prompt: HostKeyPrompt, decide: (choice: 'reject' | 'once' | 'save') => void]
   variables: [names: string[], decide: (values: Record<string, string> | null) => void]
+  password: [
+    prompt: { username: string, host: string },
+    decide: (answer: { password: string, remember: boolean } | null) => void,
+  ]
 }>()
 </script>
 
@@ -42,6 +46,7 @@ const emit = defineEmits<{
     @focus="emit('focusPane', props.node.id)"
     @host-key="(prompt, decide) => emit('hostKey', prompt, decide)"
     @variables="(names, decide) => emit('variables', names, decide)"
+    @password="(prompt, decide) => emit('password', prompt, decide)"
   />
 
   <ResizablePanelGroup
@@ -60,6 +65,7 @@ const emit = defineEmits<{
           @resize="(splitId, sizes) => emit('resize', splitId, sizes)"
           @host-key="(prompt, decide) => emit('hostKey', prompt, decide)"
           @variables="(names, decide) => emit('variables', names, decide)"
+          @password="(prompt, decide) => emit('password', prompt, decide)"
         />
       </ResizablePanel>
     </template>

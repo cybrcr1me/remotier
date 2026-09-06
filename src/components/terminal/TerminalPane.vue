@@ -14,11 +14,16 @@ import {
   infoEntry,
   type LogEntry,
 } from '@/lib/connection-log'
-import { connectWithHostKeyPrompt, type HostKeyPrompt } from '@/lib/connect-flow'
+import {
+  connectWithHostKeyPrompt,
+  type HostKeyPrompt,
+  type PasswordPrompt,
+} from '@/lib/connect-flow'
 import type { ConnectProgress } from '@/lib/types'
 import { useVarsStore } from '@/stores/vars'
 import { errorMessage, ipc } from '@/lib/ipc'
 import { readTerminalTheme, terminalFontFamily } from '@/lib/terminal-theme'
+import { useInventoryStore } from '@/stores/inventory'
 import { useSessionsStore } from '@/stores/sessions'
 import { useSettingsStore } from '@/stores/settings'
 import { Channel } from '@tauri-apps/api/core'
@@ -31,6 +36,7 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import { Terminal } from '@xterm/xterm'
 import { TerminalIcon } from '@lucide/vue'
 import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { toast } from 'vue-sonner'
 import '@xterm/xterm/css/xterm.css'
 
 const props = defineProps<{
@@ -47,9 +53,14 @@ const emit = defineEmits<{
   focus: []
   hostKey: [prompt: HostKeyPrompt, decide: (choice: 'reject' | 'once' | 'save') => void]
   variables: [names: string[], decide: (values: Record<string, string> | null) => void]
+  password: [
+    prompt: PasswordPrompt,
+    decide: (answer: { password: string, remember: boolean } | null) => void,
+  ]
 }>()
 
 const sessions = useSessionsStore()
+const inventory = useInventoryStore()
 const settings = useSettingsStore()
 const vars = useVarsStore()
 
@@ -155,6 +166,22 @@ async function connect() {
         new Promise(resolve => emit('hostKey', prompt, resolve)),
       askAboutVariables: names =>
         new Promise(resolve => emit('variables', names, resolve)),
+      askForPassword: async (prompt) => {
+        const answer = await new Promise<{ password: string, remember: boolean } | null>(
+          resolve => emit('password', prompt, resolve),
+        )
+        if (!answer) return null
+
+        if (answer.remember && props.hostId) {
+          try {
+            // Saving is opt-in; a failure must not stop the connection that follows.
+            await inventory.updateHostPassword(props.hostId, answer.password)
+          } catch (e) {
+            toast.error('Could not save the password', { description: errorMessage(e) })
+          }
+        }
+        return answer.password
+      },
       // Saved against the host itself: that is the most specific scope, so it resolves
       // whichever group declared the variable.
       saveVariables: async (values) => {

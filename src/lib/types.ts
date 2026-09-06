@@ -12,6 +12,9 @@ export interface Group {
   defaultPort: number | null
   defaultIdentityId: string | null
   defaultJumpHostId: string | null
+  /** Opaque key resolved by `lib/appearance`. */
+  icon: string | null
+  color: string | null
   createdAt: number
   updatedAt: number
 }
@@ -26,8 +29,17 @@ export interface Host {
   identityId: string | null
   jumpHostId: string | null
   color: string | null
+  /** Opaque key resolved by `lib/appearance`. */
+  icon: string | null
   tags: string[]
   sort: number
+  /** Set when the host carries its own username instead of using an identity's. */
+  username: string | null
+  /** `null` means "use the inherited identity"; otherwise these credentials win. */
+  authKind: AuthKind | null
+  /** Whether a password is stored on the host. The password itself never crosses IPC. */
+  hasPassword: boolean
+  keyId: string | null
   createdAt: number
   updatedAt: number
 }
@@ -87,6 +99,8 @@ export interface GroupInput {
   defaultPort?: number | null
   defaultIdentityId?: string | null
   defaultJumpHostId?: string | null
+  icon?: string | null
+  color?: string | null
 }
 
 export interface HostInput {
@@ -97,8 +111,15 @@ export interface HostInput {
   identityId?: string | null
   jumpHostId?: string | null
   color?: string | null
+  icon?: string | null
   tags?: string[]
   sort?: number | null
+  /** Credentials on the host itself. `authKind` of null keeps using the identity. */
+  username?: string | null
+  authKind?: AuthKind | null
+  /** Omit to keep the stored password, `''` to clear it. */
+  password?: string | null
+  keyId?: string | null
 }
 
 export interface IdentityInput {
@@ -155,6 +176,8 @@ export interface ConnectRequest {
   rows: number
   policy?: HostKeyPolicy
   term?: string
+  /** Used for this connection only; never stored. */
+  password?: string
   /** Correlates `ssh://progress` events with the pane that started this attempt. */
   attemptId: string
 }
@@ -191,6 +214,7 @@ export type RemotierError =
   | { kind: 'unknownHostKey', message: string, host: string, fingerprint: string }
   | { kind: 'changedHostKey', message: string, host: string, fingerprint: string, line: number }
   | { kind: 'unresolvedVariables', message: string, variables: string[] }
+  | { kind: 'passwordRequired', message: string, username: string, host: string }
   | { kind: string, message: string }
 
 /** A `Host` block read from `~/.ssh/config`. */

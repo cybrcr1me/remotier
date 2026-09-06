@@ -28,6 +28,9 @@ pub struct ConnectRequest {
     #[serde(default = "strict_policy")]
     pub policy: HostKeyPolicy,
     pub term: Option<String>,
+    /// Supplied when the user answered a password prompt. Used for this connection only
+    /// and never written to the database.
+    pub password: Option<String>,
     /// Correlates progress events with the pane that asked for the connection. The
     /// session id does not exist yet while connecting, so the caller supplies this.
     pub attempt_id: String,
@@ -63,7 +66,12 @@ pub async fn ssh_connect(
     request: ConnectRequest,
     on_data: IpcChannel<InvokeResponseBody>,
 ) -> Result<String> {
-    let target = resolve::target(&state.db, state.vault()?, &request.host_id)?;
+    let target = resolve::target(
+        &state.db,
+        state.vault()?,
+        &request.host_id,
+        request.password.as_deref(),
+    )?;
     let term = request.term.unwrap_or_else(|| DEFAULT_TERM.to_string());
 
     log::info!(

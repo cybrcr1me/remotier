@@ -18,6 +18,11 @@ export interface HostKeyPrompt {
   fingerprint: string
 }
 
+export interface PasswordPrompt {
+  username: string
+  host: string
+}
+
 /** What the user chose when shown an unknown host key. */
 export type HostKeyDecision = 'reject' | 'once' | 'save'
 
@@ -34,6 +39,11 @@ export interface ConnectFlowOptions {
   askAboutVariables?: (names: string[]) => Promise<Record<string, string> | null>
   /** Persists the answers before retrying. */
   saveVariables?: (values: Record<string, string>) => Promise<void>
+  /**
+   * Shown when password authentication is configured but nothing is stored. Resolves to
+   * the password, or `null` if the user cancelled.
+   */
+  askForPassword?: (prompt: PasswordPrompt) => Promise<string | null>
 }
 
 const POLICY_FOR: Record<Exclude<HostKeyDecision, 'reject'>, HostKeyPolicy> = {
@@ -66,13 +76,21 @@ export class HostKeyRejected extends Error {
  * @returns the new session id.
  */
 export async function connectWithHostKeyPrompt(options: ConnectFlowOptions): Promise<string> {
-  const { request, connect, askAboutHostKey, askAboutVariables, saveVariables } = options
+  const {
+    request,
+    connect,
+    askAboutHostKey,
+    askAboutVariables,
+    saveVariables,
+    askForPassword,
+  } = options
 
-  // Unresolved variables are collected first: they fail before the connection is even
-  // attempted, so asking for the host key first would be the wrong order.
+  // Unresolved variables and a missing password are both collected before the connection
+  // is attempted, so they are handled ahead of the host key.
   let attempt: ConnectRequest = { ...request, policy: 'strict' }
+  let askedForPassword = false
 
-  for (let round = 0; round < 2; round += 1) {
+  for (let round = 0; round < 3; round += 1) {
     try {
       return await connect(attempt)
     } catch (error) {
@@ -85,6 +103,18 @@ export async function connectWithHostKeyPrompt(options: ConnectFlowOptions): Pro
           throw new ConnectCancelled('Connection cancelled: variables were not filled in.')
         }
         await saveVariables?.(values)
+        continue
+      }
+
+      if (tagged?.kind === 'passwordRequired' && askForPassword && !askedForPassword) {
+        askedForPassword = true
+        const { username, host } = tagged as PasswordPrompt & { kind: string }
+        const password = await askForPassword({ username, host })
+        if (password === null) {
+          throw new ConnectCancelled('Connection cancelled: no password was given.')
+        }
+        // Carried on the request only; the backend never writes it down.
+        attempt = { ...attempt, password }
         continue
       }
 

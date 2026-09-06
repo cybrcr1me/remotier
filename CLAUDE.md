@@ -144,3 +144,13 @@ Before tagging, run `scripts/check-version.sh`. See `docs/RELEASING.md`.
 Building bundles locally: run `bun run tauri build` from the repository root, never from
 `src-tauri/` (the `beforeBuildCommand` needs the root `package.json`). The `.dmg` step
 needs macOS Automation → Finder permission; the `.app` does not. See `docs/RELEASING.md`.
+
+## Host credentials vs identities
+
+A host either uses an identity (and inherits one through its group chain) or carries its
+own username plus credentials. `hosts.auth_kind` decides: `NULL` means "use the identity",
+anything else means the host's own fields win outright. The editor presents this as an
+either/or toggle, and saving one mode clears the other so it is never ambiguous.
+
+`hosts.username` on its own still overrides the identity's username while leaving the
+authentication method alone - useful when several hosts share a key but not a login name.

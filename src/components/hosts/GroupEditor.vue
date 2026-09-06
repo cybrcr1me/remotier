@@ -20,6 +20,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
+import AppearancePicker from './AppearancePicker.vue'
 import { INHERIT, resolveInherited } from '@/lib/inherit'
 import { NAME_EXAMPLE, placeholderExample } from '@/lib/placeholder'
 import { errorMessage } from '@/lib/ipc'
@@ -50,6 +51,8 @@ const form = reactive({
   parentId: INHERIT,
   defaultPort: '',
   defaultIdentityId: INHERIT,
+  icon: 'folder',
+  color: 'default',
 })
 
 const newVariable = reactive({ name: '', label: '', defaultValue: '', required: false })
@@ -73,6 +76,8 @@ watch(
     form.defaultPort = props.group?.defaultPort?.toString() ?? ''
     form.defaultIdentityId = props.group?.defaultIdentityId ?? INHERIT
     Object.assign(newVariable, { name: '', label: '', defaultValue: '', required: false })
+    form.icon = props.group?.icon ?? 'folder'
+    form.color = props.group?.color ?? 'default'
   },
   { immediate: true },
 )
@@ -85,6 +90,8 @@ async function save() {
     parentId: resolveInherited(form.parentId),
     defaultPort: form.defaultPort.trim() === '' ? null : Number(form.defaultPort),
     defaultIdentityId: resolveInherited(form.defaultIdentityId),
+    icon: form.icon,
+    color: form.color === 'default' ? null : form.color,
   }
 
   busy.value = true
@@ -166,6 +173,8 @@ async function setValue(name: string, value: string) {
               </SelectContent>
             </Select>
           </Field>
+
+          <AppearancePicker v-model:icon="form.icon" v-model:color="form.color" />
 
           <Field>
             <FieldLabel for="group-port">Default port</FieldLabel>

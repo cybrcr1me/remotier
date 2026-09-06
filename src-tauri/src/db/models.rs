@@ -17,6 +17,10 @@ pub struct Group {
     pub parent_id: Option<String>,
     pub name: String,
     pub sort: i64,
+    /// Opaque key resolved to an icon by the frontend.
+    pub icon: Option<String>,
+    /// Opaque key resolved to a border colour by the frontend.
+    pub color: Option<String>,
     pub default_port: Option<i64>,
     pub default_identity_id: Option<String>,
     pub default_jump_host_id: Option<String>,
@@ -26,7 +30,8 @@ pub struct Group {
 
 impl Group {
     pub const COLUMNS: &'static str =
-        "id, parent_id, name, sort, default_port, default_identity_id, default_jump_host_id, created_at, updated_at";
+        "id, parent_id, name, sort, default_port, default_identity_id, default_jump_host_id, \
+         icon, color, created_at, updated_at";
 
     pub fn from_row(row: &Row) -> Result<Self> {
         Ok(Self {
@@ -37,8 +42,10 @@ impl Group {
             default_port: row.get(4)?,
             default_identity_id: row.get(5)?,
             default_jump_host_id: row.get(6)?,
-            created_at: row.get(7)?,
-            updated_at: row.get(8)?,
+            icon: row.get(7)?,
+            color: row.get(8)?,
+            created_at: row.get(9)?,
+            updated_at: row.get(10)?,
         })
     }
 }
@@ -55,18 +62,30 @@ pub struct Host {
     pub identity_id: Option<String>,
     pub jump_host_id: Option<String>,
     pub color: Option<String>,
+    /// Opaque key resolved to an icon by the frontend.
+    pub icon: Option<String>,
     pub tags: Vec<String>,
     pub sort: i64,
+    /// Set when the host carries its own credentials instead of using an identity.
+    pub username: Option<String>,
+    /// `None` means "use the inherited identity"; `Some` means these credentials win.
+    pub auth_kind: Option<AuthKind>,
+    /// Whether a password is stored on the host itself. Never the password.
+    pub has_password: bool,
+    pub key_id: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
 
 impl Host {
     pub const COLUMNS: &'static str =
-        "id, group_id, label, hostname, port, identity_id, jump_host_id, color, tags, sort, created_at, updated_at";
+        "id, group_id, label, hostname, port, identity_id, jump_host_id, color, tags, sort, \
+         username, auth_kind, password_ref, key_id, icon, created_at, updated_at";
 
     pub fn from_row(row: &Row) -> Result<Self> {
         let tags: String = row.get(8)?;
+        let auth_kind: Option<String> = row.get(11)?;
+        let password_ref: Option<String> = row.get(12)?;
         Ok(Self {
             id: row.get(0)?,
             group_id: row.get(1)?,
@@ -78,8 +97,13 @@ impl Host {
             color: row.get(7)?,
             tags: tags_from_json(&tags),
             sort: row.get(9)?,
-            created_at: row.get(10)?,
-            updated_at: row.get(11)?,
+            username: row.get(10)?,
+            auth_kind: auth_kind.as_deref().map(AuthKind::parse),
+            has_password: password_ref.is_some(),
+            key_id: row.get(13)?,
+            icon: row.get(14)?,
+            created_at: row.get(15)?,
+            updated_at: row.get(16)?,
         })
     }
 }

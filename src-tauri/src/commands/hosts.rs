@@ -2,7 +2,8 @@ use rusqlite::params;
 use serde::Deserialize;
 use tauri::State;
 
-use crate::db::models::Host;
+use crate::commands::secrets;
+use crate::db::models::{AuthKind, Host};
 use crate::db::{new_id, now_ms, query_all, query_one};
 use crate::error::{Error, Result};
 use crate::state::AppState;
@@ -18,9 +19,17 @@ pub struct HostInput {
     pub identity_id: Option<String>,
     pub jump_host_id: Option<String>,
     pub color: Option<String>,
+    pub icon: Option<String>,
     #[serde(default)]
     pub tags: Vec<String>,
     pub sort: Option<i64>,
+    /// Credentials set on the host itself, for a server that does not warrant an
+    /// identity. `auth_kind` of `None` keeps using the inherited identity.
+    pub username: Option<String>,
+    pub auth_kind: Option<AuthKind>,
+    /// Inbound only. `None` keeps any stored password, `Some("")` clears it.
+    pub password: Option<String>,
+    pub key_id: Option<String>,
 }
 
 impl HostInput {
@@ -65,10 +74,16 @@ pub fn create_host(state: State<'_, AppState>, input: HostInput) -> Result<Host>
     let tags = serde_json::to_string(&input.tags)?;
 
     state.db.write(|tx| {
+        let password_ref = match input.password.as_deref().filter(|p| !p.is_empty()) {
+            Some(password) => Some(secrets::put(tx, state.vault()?, None, password)?),
+            None => None,
+        };
+
         tx.execute(
             "INSERT INTO hosts (id, group_id, label, hostname, port, identity_id, jump_host_id,
-                                color, tags, sort, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)",
+                                color, tags, sort, username, auth_kind, password_ref, key_id,
+                                icon, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?16)",
             params![
                 id,
                 input.group_id,
@@ -80,6 +95,11 @@ pub fn create_host(state: State<'_, AppState>, input: HostInput) -> Result<Host>
                 input.color,
                 tags,
                 input.sort.unwrap_or(0),
+                input.username.as_deref().map(str::trim).filter(|u| !u.is_empty()),
+                input.auth_kind.map(AuthKind::as_str),
+                password_ref,
+                input.key_id,
+                input.icon,
                 now,
             ],
         )?;
@@ -98,10 +118,35 @@ pub fn update_host(state: State<'_, AppState>, id: String, input: HostInput) -> 
     let tags = serde_json::to_string(&input.tags)?;
 
     let changed = state.db.write(|tx| {
+        let existing: Option<String> = tx
+            .query_row(
+                "SELECT password_ref FROM hosts WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .map_err(|_| Error::NotFound("host", id.clone()))?;
+
+        let password_ref = match input.password.as_deref() {
+            // Absent: keep whatever is stored.
+            None => existing,
+            // Empty string: explicit clear.
+            Some("") => {
+                secrets::delete(tx, existing.as_deref())?;
+                None
+            }
+            Some(password) => Some(secrets::put(
+                tx,
+                state.vault()?,
+                existing.as_deref(),
+                password,
+            )?),
+        };
+
         Ok(tx.execute(
             "UPDATE hosts SET group_id = ?2, label = ?3, hostname = ?4, port = ?5,
                     identity_id = ?6, jump_host_id = ?7, color = ?8, tags = ?9, sort = ?10,
-                    updated_at = ?11
+                    username = ?11, auth_kind = ?12, password_ref = ?13, key_id = ?14,
+                    icon = ?15, updated_at = ?16
              WHERE id = ?1",
             params![
                 id,
@@ -114,6 +159,11 @@ pub fn update_host(state: State<'_, AppState>, id: String, input: HostInput) -> 
                 input.color,
                 tags,
                 input.sort.unwrap_or(0),
+                input.username.as_deref().map(str::trim).filter(|u| !u.is_empty()),
+                input.auth_kind.map(AuthKind::as_str),
+                password_ref,
+                input.key_id,
+                input.icon,
                 now_ms(),
             ],
         )?)
@@ -127,9 +177,20 @@ pub fn update_host(state: State<'_, AppState>, id: String, input: HostInput) -> 
 
 #[tauri::command(async)]
 pub fn delete_host(state: State<'_, AppState>, id: String) -> Result<()> {
-    let changed = state
-        .db
-        .write(|tx| Ok(tx.execute("DELETE FROM hosts WHERE id = ?1", params![id])?))?;
+    let changed = state.db.write(|tx| {
+        // Take the sealed password with it rather than orphaning it in the vault.
+        let password_ref: Option<String> = tx
+            .query_row(
+                "SELECT password_ref FROM hosts WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .ok()
+            .flatten();
+        secrets::delete(tx, password_ref.as_deref())?;
+        Ok(tx.execute("DELETE FROM hosts WHERE id = ?1", params![id])?)
+    })?;
+
     if changed == 0 {
         return Err(Error::NotFound("host", id));
     }
