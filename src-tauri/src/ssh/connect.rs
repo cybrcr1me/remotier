@@ -165,7 +165,7 @@ async fn authenticate(handle: &mut Handle<Handler>, target: &Target) -> Result<(
     let user = target.username.as_str();
 
     match &target.auth {
-        AuthMaterial::Password(password) => {
+        AuthMaterial::Password(Some(password)) => {
             if handle.authenticate_password(user, password.as_str()).await?.success() {
                 return Ok(());
             }
@@ -177,8 +177,23 @@ async fn authenticate(handle: &mut Handle<Handler>, target: &Target) -> Result<(
             Err(Error::Auth("the server rejected the password".into()))
         }
 
-        AuthMaterial::Interactive(password) => {
-            if keyboard_interactive(handle, user, password.as_ref().map(|p| p.as_str())).await? {
+        // Nothing stored. Try what does not need a secret before troubling the user:
+        // plenty of hosts accept `none` or an empty keyboard-interactive exchange.
+        AuthMaterial::Password(None) | AuthMaterial::Interactive(None) => {
+            if handle.authenticate_none(user).await?.success() {
+                return Ok(());
+            }
+            if keyboard_interactive(handle, user, None).await? {
+                return Ok(());
+            }
+            Err(Error::PasswordRequired {
+                username: user.to_string(),
+                host: format!("{}:{}", target.hostname, target.port),
+            })
+        }
+
+        AuthMaterial::Interactive(Some(password)) => {
+            if keyboard_interactive(handle, user, Some(password.as_str())).await? {
                 return Ok(());
             }
             Err(Error::Auth("keyboard-interactive authentication failed".into()))

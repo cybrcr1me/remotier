@@ -155,6 +155,20 @@ either/or toggle, and saving one mode clears the other so it is never ambiguous.
 `hosts.username` on its own still overrides the identity's username while leaving the
 authentication method alone - useful when several hosts share a key but not a login name.
 
+## Terminal sizing
+
+`term.open()` and `FitAddon.fit()` must not run against a zero-sized container, and the
+WebGL renderer must not be attached to one either - it produces a canvas that never
+paints, which looks exactly like a session producing no output. `TerminalPane` therefore
+fits and attaches WebGL from the resize observer, once the element reports real
+dimensions.
+
+## Live test isolation
+
+`REMOTIER_KNOWN_HOSTS` overrides the known_hosts location. `ssh_live.rs` points it at a
+temp file so the suite neither reads nor writes the developer's real file - otherwise
+"a host never seen before" depends on what they happen to have trusted.
+
 ## Remotier design language
 
 Dark only; there is no light theme. Import `tokens.css` and use `var(--rm-*)` — never raw hex in components.

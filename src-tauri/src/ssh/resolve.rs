@@ -22,7 +22,9 @@ pub const DEFAULT_TERM: &str = "xterm-256color";
 
 /// Credentials for one connection. Secrets are zeroized when this is dropped.
 pub enum AuthMaterial {
-    Password(Zeroizing<String>),
+    /// `None` means no secret is stored. The connection is attempted anyway and the user
+    /// is only asked if the server actually refuses.
+    Password(Option<Zeroizing<String>>),
     /// A private key held in the vault.
     Key {
         pem: Zeroizing<String>,
@@ -318,15 +320,7 @@ pub fn target(
 
     // Credentials set directly on the host win outright.
     if let Some(auth_kind) = resolution.host.auth_kind {
-        let auth = host_auth_material(
-            db,
-            vault,
-            &resolution.host,
-            auth_kind,
-            supplied_password,
-            &resolution.username,
-            &resolution.hostname,
-        )?;
+        let auth = host_auth_material(db, vault, &resolution.host, auth_kind, supplied_password)?;
         return Ok(Target {
             host_id: resolution.host.id,
             label: resolution.host.label,
@@ -347,19 +341,11 @@ pub fn target(
             };
 
             match identity.auth_kind {
-                // Nothing stored means the user is asked once, and it is used for this
-                // connection only. Storing a password must stay optional.
-                AuthKind::Password => AuthMaterial::Password(match password {
-                    Some(password) => password,
-                    None => Zeroizing::new(
-                        supplied_password
-                            .ok_or_else(|| Error::PasswordRequired {
-                                username: resolution.username.clone(),
-                                host: format!("{}:{}", resolution.hostname, resolution.port),
-                            })?
-                            .to_string(),
-                    ),
-                }),
+                // A missing password is not an error here: the connection is tried
+                // first, and only a refusal from the server prompts the user.
+                AuthKind::Password => AuthMaterial::Password(
+                    password.or_else(|| supplied_password.map(|p| Zeroizing::new(p.to_string()))),
+                ),
                 AuthKind::Interactive => AuthMaterial::Interactive(
                     password.or_else(|| supplied_password.map(|p| Zeroizing::new(p.to_string()))),
                 ),
@@ -382,15 +368,12 @@ pub fn target(
 }
 
 /// Build credentials from the fields stored on the host itself.
-#[allow(clippy::too_many_arguments)]
 fn host_auth_material(
     db: &Db,
     vault: &Vault,
     host: &Host,
     auth_kind: AuthKind,
     supplied_password: Option<&str>,
-    username: &str,
-    hostname: &str,
 ) -> Result<AuthMaterial> {
     let password = match host_password_ref(db, &host.id)? {
         Some(reference) => Some(db.read(|conn| secrets::get(conn, vault, &reference))?),
@@ -398,19 +381,10 @@ fn host_auth_material(
     };
 
     match auth_kind {
-        // A host with no stored password is prompted for, not refused: saving the
-        // password has to stay optional.
-        AuthKind::Password => Ok(AuthMaterial::Password(match password {
-            Some(password) => password,
-            None => Zeroizing::new(
-                supplied_password
-                    .ok_or_else(|| Error::PasswordRequired {
-                        username: username.to_string(),
-                        host: hostname.to_string(),
-                    })?
-                    .to_string(),
-            ),
-        })),
+        // As above: try first, ask only if the server refuses.
+        AuthKind::Password => Ok(AuthMaterial::Password(
+            password.or_else(|| supplied_password.map(|p| Zeroizing::new(p.to_string()))),
+        )),
         AuthKind::Interactive => Ok(AuthMaterial::Interactive(
             password.or_else(|| supplied_password.map(|p| Zeroizing::new(p.to_string()))),
         )),

@@ -242,7 +242,7 @@ fn the_stored_password_is_decrypted_for_the_connection() {
 
     assert_eq!(target.username, "deploy");
     match target.auth {
-        AuthMaterial::Password(password) => assert_eq!(*password, "hunter2"),
+        AuthMaterial::Password(Some(password)) => assert_eq!(*password, "hunter2"),
         _ => panic!("expected password auth"),
     }
 }
@@ -317,7 +317,7 @@ fn a_host_can_carry_its_own_username_and_password() {
 
     assert_eq!(target.username, "root");
     match target.auth {
-        AuthMaterial::Password(password) => assert_eq!(*password, "hunter2"),
+        AuthMaterial::Password(Some(password)) => assert_eq!(*password, "hunter2"),
         _ => panic!("expected password auth from the host's own credentials"),
     }
 }
@@ -343,7 +343,7 @@ fn host_credentials_beat_an_inherited_identity() {
     // The host is explicit; the inherited identity must not override it.
     assert_eq!(target.username, "from-host");
     match target.auth {
-        AuthMaterial::Password(password) => assert_eq!(*password, "host-password"),
+        AuthMaterial::Password(Some(password)) => assert_eq!(*password, "host-password"),
         _ => panic!("expected the host's own password"),
     }
 }
@@ -415,18 +415,16 @@ fn preview_reports_host_credentials_rather_than_an_identity() {
 }
 
 #[test]
-fn a_host_with_password_auth_and_no_stored_password_asks_for_one() {
+fn a_host_with_no_stored_password_still_resolves() {
     let f = Fixture::new("ask-host");
     let host = f.host_with_credentials("example.com", "root", "password", None);
 
-    match resolve::target(&f.db, &f.vault, &host, None) {
-        Err(Error::PasswordRequired { username, host }) => {
-            // Enough context for the prompt to say who it is asking for.
-            assert_eq!(username, "root");
-            assert_eq!(host, "example.com");
-        }
-        other => panic!("expected PasswordRequired, got {:?}", other.map(|_| "a target")),
-    }
+    // Resolution must not refuse here: the connection is attempted first, and only a
+    // refusal from the server prompts the user.
+    let target = resolve::target(&f.db, &f.vault, &host, None).unwrap();
+
+    assert_eq!(target.username, "root");
+    assert!(matches!(target.auth, AuthMaterial::Password(None)));
 }
 
 #[test]
@@ -437,13 +435,13 @@ fn a_supplied_password_satisfies_a_host_that_stores_none() {
     let target = resolve::target(&f.db, &f.vault, &host, Some("typed-in")).unwrap();
 
     match target.auth {
-        AuthMaterial::Password(password) => assert_eq!(*password, "typed-in"),
+        AuthMaterial::Password(Some(password)) => assert_eq!(*password, "typed-in"),
         _ => panic!("expected password auth"),
     }
 }
 
 #[test]
-fn an_identity_with_password_auth_and_no_stored_password_asks_for_one() {
+fn an_identity_with_no_stored_password_still_resolves() {
     let f = Fixture::new("ask-identity");
     let identity = f.identity("deploy", None);
     // `identity()` only stores a password when given one; force password auth without it.
@@ -457,10 +455,10 @@ fn an_identity_with_password_auth_and_no_stored_password_asks_for_one() {
     .unwrap();
     let host = f.host("example.com", None, None, Some(&identity));
 
-    match resolve::target(&f.db, &f.vault, &host, None) {
-        Err(Error::PasswordRequired { username, .. }) => assert_eq!(username, "deploy"),
-        other => panic!("expected PasswordRequired, got {:?}", other.map(|_| "a target")),
-    }
+    let target = resolve::target(&f.db, &f.vault, &host, None).unwrap();
+
+    assert_eq!(target.username, "deploy");
+    assert!(matches!(target.auth, AuthMaterial::Password(None)));
 }
 
 #[test]
@@ -480,7 +478,7 @@ fn a_supplied_password_satisfies_an_identity_that_stores_none() {
     let target = resolve::target(&f.db, &f.vault, &host, Some("typed-in")).unwrap();
 
     match target.auth {
-        AuthMaterial::Password(password) => assert_eq!(*password, "typed-in"),
+        AuthMaterial::Password(Some(password)) => assert_eq!(*password, "typed-in"),
         _ => panic!("expected password auth"),
     }
 }
@@ -493,7 +491,7 @@ fn a_stored_password_is_preferred_over_a_supplied_one() {
     let target = resolve::target(&f.db, &f.vault, &host, Some("typed-in")).unwrap();
 
     match target.auth {
-        AuthMaterial::Password(password) => assert_eq!(*password, "stored"),
+        AuthMaterial::Password(Some(password)) => assert_eq!(*password, "stored"),
         _ => panic!("expected password auth"),
     }
 }

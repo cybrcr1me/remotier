@@ -22,7 +22,15 @@ pub enum Verdict {
     Changed { line: usize },
 }
 
+/// Where host keys are read from and written to.
+///
+/// `REMOTIER_KNOWN_HOSTS` overrides the location. Tests set it so they never read or
+/// write the developer's real file, and it gives users with a non-standard layout a way
+/// to point at theirs.
 pub fn default_path() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("REMOTIER_KNOWN_HOSTS") {
+        return Some(PathBuf::from(path));
+    }
     dirs::home_dir().map(|home| home.join(".ssh").join("known_hosts"))
 }
 

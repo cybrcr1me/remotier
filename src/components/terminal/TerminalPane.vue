@@ -76,6 +76,8 @@ const fit = shallowRef<FitAddon | null>(null)
 
 let resizeObserver: ResizeObserver | null = null
 let resizeTimer: number | undefined
+/** WebGL is attached only once the element has a real size; see `measure`. */
+let acceleratorLoaded = false
 
 function createTerminal() {
   const term = new Terminal({
@@ -99,16 +101,6 @@ function createTerminal() {
 
   term.open(host.value!)
 
-  // WebGL is the fast path but is unavailable in some VMs and remote sessions; the
-  // canvas renderer is the built-in fallback, so a failure here is not fatal.
-  try {
-    const webgl = new WebglAddon()
-    webgl.onContextLoss(() => webgl.dispose())
-    term.loadAddon(webgl)
-  } catch (e) {
-    console.warn('WebGL renderer unavailable, falling back:', errorMessage(e))
-  }
-
   term.onData((data) => {
     if (props.sessionId) void ipc.sshWrite(props.sessionId, encode(data))
   })
@@ -118,7 +110,6 @@ function createTerminal() {
 
   terminal.value = term
   fit.value = fitAddon
-  fitAddon.fit()
 }
 
 function encode(data: string) {
@@ -204,12 +195,39 @@ async function connect() {
   }
 }
 
+/**
+ * Attach the WebGL renderer.
+ *
+ * Deferred until the element has a real size: initialising it against a zero-sized
+ * container leaves a canvas that never paints, which looks exactly like a connection
+ * that produces no output.
+ */
+function loadAccelerator(term: Terminal) {
+  if (acceleratorLoaded) return
+  acceleratorLoaded = true
+
+  // WebGL is the fast path but is unavailable in some VMs and remote sessions; xterm
+  // falls back to its DOM renderer, so a failure here is not fatal.
+  try {
+    const webgl = new WebglAddon()
+    webgl.onContextLoss(() => webgl.dispose())
+    term.loadAddon(webgl)
+  } catch (e) {
+    console.warn('WebGL renderer unavailable, falling back:', errorMessage(e))
+  }
+}
+
 /** Fit locally first so the grid is right, then tell the server. */
 function handleResize() {
   const term = terminal.value
-  if (!term || !fit.value) return
+  const element = host.value
+  if (!term || !fit.value || !element) return
+
+  // A zero-sized container yields a nonsensical grid; wait for a real layout.
+  if (element.clientWidth === 0 || element.clientHeight === 0) return
 
   fit.value.fit()
+  loadAccelerator(term)
 
   window.clearTimeout(resizeTimer)
   resizeTimer = window.setTimeout(() => {
@@ -222,6 +240,9 @@ onMounted(() => {
 
   resizeObserver = new ResizeObserver(handleResize)
   if (host.value) resizeObserver.observe(host.value)
+
+  // The observer covers the usual case; this catches a container that is already sized.
+  requestAnimationFrame(handleResize)
 
   if (props.hostId && props.autoConnect !== false) void connect()
 })

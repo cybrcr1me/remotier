@@ -27,11 +27,27 @@ const PORT: u16 = 2222;
 const USER: &str = "test";
 const PASSWORD: &str = "testpass";
 
+/// Point every test at a throwaway known_hosts.
+///
+/// Without this the suite reads the developer's real file, so whether a host counts as
+/// "never seen" depends on what they happen to have trusted.
+fn isolate_known_hosts() {
+    use std::sync::Once;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        let path = std::env::temp_dir().join(format!("remotier-known-hosts-{}", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        // SAFETY: called before any test spawns a thread that reads the environment.
+        unsafe { std::env::set_var("REMOTIER_KNOWN_HOSTS", &path) };
+    });
+}
+
 fn key_path() -> String {
     std::env::var("REMOTIER_TEST_KEY").unwrap_or_else(|_| "/tmp/remotier-testkey".to_string())
 }
 
 fn target(auth: AuthMaterial) -> Target {
+    isolate_known_hosts();
     Target {
         host_id: "test".into(),
         label: "test".into(),
@@ -72,7 +88,7 @@ async fn shell_roundtrip(mut connection: connect::Connection) -> String {
 #[tokio::test]
 #[ignore = "needs the dockerised sshd"]
 async fn connects_with_a_password_and_runs_a_command() {
-    let target = target(AuthMaterial::Password(Zeroizing::new(PASSWORD.into())));
+    let target = target(AuthMaterial::Password(Some(Zeroizing::new(PASSWORD.into()))));
     let connection = connect::open(&target, HostKeyPolicy::TrustOnce, "xterm-256color", 80, 24, &|_| {})
         .await
         .expect("connect with password");
@@ -115,7 +131,7 @@ async fn connects_with_a_key_held_in_the_vault() {
 #[tokio::test]
 #[ignore = "needs the dockerised sshd"]
 async fn a_wrong_password_is_reported_as_an_auth_failure() {
-    let target = target(AuthMaterial::Password(Zeroizing::new("nope".into())));
+    let target = target(AuthMaterial::Password(Some(Zeroizing::new("nope".into()))));
     let Err(error) = connect::open(&target, HostKeyPolicy::TrustOnce, "xterm", 80, 24, &|_| {}).await
     else {
         panic!("a wrong password must not authenticate");
@@ -130,9 +146,9 @@ async fn a_wrong_password_is_reported_as_an_auth_failure() {
 #[tokio::test]
 #[ignore = "needs the dockerised sshd"]
 async fn strict_policy_refuses_a_host_it_has_never_seen() {
-    // The container's key is not in known_hosts, so strict mode must refuse it and say
-    // so precisely enough for the UI to show a fingerprint prompt.
-    let target = target(AuthMaterial::Password(Zeroizing::new(PASSWORD.into())));
+    // Runs against an isolated known_hosts, so this does not depend on what the
+    // developer happens to have trusted.
+    let target = target(AuthMaterial::Password(Some(Zeroizing::new(PASSWORD.into()))));
     let Err(error) = connect::open(&target, HostKeyPolicy::Strict, "xterm", 80, 24, &|_| {}).await else {
         panic!("strict mode must refuse a host that is not in known_hosts");
     };
@@ -148,7 +164,7 @@ async fn strict_policy_refuses_a_host_it_has_never_seen() {
 #[tokio::test]
 #[ignore = "needs the dockerised sshd"]
 async fn resizing_a_live_pty_is_accepted() {
-    let target = target(AuthMaterial::Password(Zeroizing::new(PASSWORD.into())));
+    let target = target(AuthMaterial::Password(Some(Zeroizing::new(PASSWORD.into()))));
     let connection = connect::open(&target, HostKeyPolicy::TrustOnce, "xterm-256color", 80, 24, &|_| {})
         .await
         .expect("connect");
@@ -351,7 +367,7 @@ async fn reports_each_connection_stage_in_order() {
         }
     };
 
-    let target = target(AuthMaterial::Password(Zeroizing::new(PASSWORD.into())));
+    let target = target(AuthMaterial::Password(Some(Zeroizing::new(PASSWORD.into()))));
     connect::open(&target, HostKeyPolicy::TrustOnce, "xterm-256color", 80, 24, &recorder)
         .await
         .expect("connect");
@@ -385,7 +401,7 @@ async fn reports_stages_up_to_the_point_of_failure() {
         }
     };
 
-    let target = target(AuthMaterial::Password(Zeroizing::new("wrong".into())));
+    let target = target(AuthMaterial::Password(Some(Zeroizing::new("wrong".into()))));
     let result = connect::open(&target, HostKeyPolicy::TrustOnce, "xterm", 80, 24, &recorder).await;
     assert!(result.is_err(), "a wrong password must not connect");
 
@@ -442,4 +458,41 @@ async fn connects_with_credentials_set_directly_on_the_host() {
     assert!(output.contains("remotier-ok"), "shell output was: {output}");
 
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Password auth with nothing stored must reach the server before asking the user.
+#[tokio::test]
+#[ignore = "needs the dockerised sshd"]
+async fn asks_for_a_password_only_after_the_server_refuses() {
+    use remotier_lib::ssh::resolve::AuthMaterial;
+
+    let target = target(AuthMaterial::Password(None));
+    let Err(error) = connect::open(&target, HostKeyPolicy::TrustOnce, "xterm", 80, 24, &|_| {}).await
+    else {
+        panic!("this server does require a password");
+    };
+
+    // Reached the server, tried what needs no secret, and only then asked.
+    match error {
+        Error::PasswordRequired { username, host } => {
+            assert_eq!(username, USER);
+            assert_eq!(host, format!("{HOST}:{PORT}"));
+        }
+        other => panic!("expected PasswordRequired, got {other:?}"),
+    }
+}
+
+/// And the retry with the answer succeeds, which is the loop the UI performs.
+#[tokio::test]
+#[ignore = "needs the dockerised sshd"]
+async fn a_password_supplied_after_the_prompt_connects() {
+    use remotier_lib::ssh::resolve::AuthMaterial;
+
+    let target = target(AuthMaterial::Password(Some(Zeroizing::new(PASSWORD.into()))));
+    let connection = connect::open(&target, HostKeyPolicy::TrustOnce, "xterm-256color", 80, 24, &|_| {})
+        .await
+        .expect("connect with the supplied password");
+
+    let output = shell_roundtrip(connection).await;
+    assert!(output.contains("remotier-ok"), "shell output was: {output}");
 }
