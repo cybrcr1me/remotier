@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "skills": {
+    "rust-skills": {
+      "source": "leonardomso/rust-skills",
+      "sourceType": "github",
+      "skillPath": "SKILL.md",
+      "computedHash": "9719e9ebd94783d3436ed26156bf9bf2e4c7f63b3220d9d17ff90cba55c92bb8"
+    },
+    "tauri": {
+      "source": "Microck/ordinary-claude-skills",
+      "sourceType": "github",
+      "skillPath": "skills_all/tauri/SKILL.md",
+      "computedHash": "f82b76eeabce7af9f2a8133874995c3f31110231cb379bbf422e39713c088b23"
+    },
+    "vue-best-practices": {
+      "source": "hyf0/vue-skills",
+      "sourceType": "github",
+      "skillPath": "skills/vue-best-practices/SKILL.md",
+      "computedHash": "3df585ad31aec78fe55c56c1411262737e6b231677a3153dec512a882fde80cd"
+    }
+  }
+}
