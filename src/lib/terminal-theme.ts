@@ -70,7 +70,9 @@ export function buildTerminalTheme(resolve: ColorResolver, dark: boolean): IThem
   const background = resolve('var(--background)') ?? fallback.background
   const foreground = resolve('var(--foreground)') ?? fallback.foreground
   const accent = resolve('var(--primary)') ?? foreground
-  const selection = resolve('var(--accent)') ?? (dark ? '#ffffff40' : '#00000030')
+  // Not `--accent`: that is the hover surface, one step off the canvas, so a translucent
+  // selection drawn from it would be invisible on a near-black terminal.
+  const selection = resolve('var(--muted-foreground)') ?? (dark ? '#ffffff40' : '#00000030')
 
   return {
     background,

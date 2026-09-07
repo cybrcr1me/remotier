@@ -10,10 +10,10 @@ import {
   SidebarMenuItem,
   SidebarRail,
 } from '@/components/ui/sidebar'
+import BrandMark from '@/components/layout/BrandMark.vue'
 import { navEntries } from '@/lib/nav'
 import { BAR_HEIGHT } from '@/lib/ui'
 import { cn } from '@/lib/utils'
-import { TerminalIcon } from '@lucide/vue'
 import { RouterLink, useRoute } from 'vue-router'
 
 const route = useRoute()
@@ -27,8 +27,9 @@ const route = useRoute()
       :class="cn('shrink-0 justify-center border-b p-0', BAR_HEIGHT)"
     >
       <div class="flex items-center gap-2 pl-20 pr-2 group-data-[collapsible=icon]:hidden">
-        <TerminalIcon class="size-4 shrink-0" />
-        <span class="truncate text-sm font-medium">Remotier</span>
+        <BrandMark class="size-4 shrink-0" />
+        <!-- Wordmark: Martian Mono 700, uppercase, tracking -3.5%. Set nowhere else. -->
+        <span class="truncate font-display text-sm font-bold uppercase tracking-wordmark">Remotier</span>
       </div>
     </SidebarHeader>
 

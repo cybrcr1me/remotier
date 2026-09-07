@@ -14,6 +14,8 @@ import {
   closePane as closePaneInTree,
   createPane,
   findPane,
+  insertNode,
+  movePane as movePaneInTree,
   findPaneBySession,
   listPanes,
   nextId,
@@ -22,9 +24,11 @@ import {
   setSizes as setSizesInTree,
   splitPane,
   updatePane,
+  type DropEdge,
   type LayoutNode,
   type SplitNode,
 } from '@/lib/layout'
+import { reorder } from '@/lib/dnd'
 
 export interface Tab {
   id: string
@@ -288,6 +292,120 @@ export const useSessionsStore = defineStore('sessions', () => {
     await persist()
   }
 
+  /** The pane a live session belongs to, or `null` once nothing holds it. */
+  function paneIdForSession(sessionId: string) {
+    for (const tab of tabs.value) {
+      const pane = findPaneBySession(tab.layout, sessionId)
+      if (pane) return pane.id
+    }
+    return null
+  }
+
+  /** Which tab currently holds a pane. Panes move between tabs, so this is a lookup. */
+  function tabIdForPane(paneId: string) {
+    return tabs.value.find(tab => findPane(tab.layout, paneId))?.id ?? null
+  }
+
+  /** Every pane in every tab, which is what decides whether a terminal is still needed. */
+  function allPaneIds() {
+    return tabs.value.flatMap(tab => listPanes(tab.layout)).map(pane => pane.id)
+  }
+
+  /**
+   * Mark output against whichever tab owns the pane.
+   *
+   * Terminal output handlers outlive the component that installed them, so they cannot be
+   * told their tab up front - by the time a byte arrives the pane may sit somewhere else.
+   */
+  function noteOutputFromPane(paneId: string) {
+    const tabId = tabIdForPane(paneId)
+    if (tabId) noteOutput(tabId)
+  }
+
+  /** Move a tab to a new position in the bar. `to` indexes the unchanged list. */
+  function moveTab(tabId: string, to: number) {
+    const from = tabs.value.findIndex(tab => tab.id === tabId)
+    if (from === -1) return
+    tabs.value = reorder(tabs.value, from, to)
+  }
+
+  /**
+   * Nudge the active tab one place along the bar.
+   *
+   * `moveTab` takes an insertion index into the unchanged list, so stepping right needs
+   * `index + 2`: the gap after the neighbour, which becomes the neighbour's own slot once
+   * the tab is lifted out.
+   */
+  function moveActiveTab(offset: 1 | -1) {
+    const tabId = activeTabId.value
+    if (!tabId) return
+
+    const index = tabs.value.findIndex(tab => tab.id === tabId)
+    if (index === -1) return
+
+    moveTab(tabId, offset > 0 ? index + 2 : index - 1)
+  }
+
+  /**
+   * Drop one tab into another's layout, splitting at `targetPaneId`.
+   *
+   * The whole source layout moves across, so dragging a tab that is itself split keeps
+   * that arrangement instead of flattening it. The source tab then has nothing left and
+   * is dropped - without disconnecting anything, because its panes are still open, just
+   * somewhere else. That is why this does not go through `closeTab`.
+   */
+  function mergeTabInto(sourceTabId: string, targetTabId: string, targetPaneId: string, edge: DropEdge) {
+    if (sourceTabId === targetTabId) return
+
+    const source = tabById(sourceTabId)
+    const target = tabById(targetTabId)
+    if (!source || !target || !findPane(target.layout, targetPaneId)) return
+
+    target.layout = insertNode(target.layout, targetPaneId, source.layout, edge)
+    target.activePaneId = source.activePaneId
+
+    tabs.value = tabs.value.filter(tab => tab.id !== sourceTabId)
+    clearUnread(sourceTabId)
+    if (activeTabId.value === sourceTabId) activeTabId.value = targetTabId
+  }
+
+  /** Move one pane next to another. Both may be in different tabs. */
+  function movePane(paneId: string, targetPaneId: string, edge: DropEdge) {
+    if (paneId === targetPaneId) return
+
+    const sourceTabId = tabIdForPane(paneId)
+    const targetTabId = tabIdForPane(targetPaneId)
+    if (!sourceTabId || !targetTabId) return
+
+    if (sourceTabId === targetTabId) {
+      const tab = tabById(sourceTabId)!
+      tab.layout = movePaneInTree(tab.layout, paneId, targetPaneId, edge)
+      tab.activePaneId = paneId
+      return
+    }
+
+    const source = tabById(sourceTabId)!
+    const target = tabById(targetTabId)!
+    const pane = findPane(source.layout, paneId)!
+
+    const remaining = closePaneInTree(source.layout, paneId)
+    target.layout = insertNode(target.layout, targetPaneId, pane, edge)
+    target.activePaneId = paneId
+
+    if (remaining) {
+      source.layout = remaining
+      if (source.activePaneId === paneId) {
+        source.activePaneId = listPanes(remaining)[0]?.id ?? source.activePaneId
+      }
+    } else {
+      // The source tab is empty now. Its pane lives on in the target, so nothing
+      // disconnects; the tab itself is what disappears.
+      tabs.value = tabs.value.filter(tab => tab.id !== sourceTabId)
+      clearUnread(sourceTabId)
+      if (activeTabId.value === sourceTabId) activeTabId.value = targetTabId
+    }
+  }
+
   /** The current tabs, ready to be stored as a workspace. */
   function currentLayoutJson() {
     return serialize(tabs.value, activeTabId.value)
@@ -315,6 +433,7 @@ export const useSessionsStore = defineStore('sessions', () => {
     awaitingReconnect,
     unread,
     noteOutput,
+    noteOutputFromPane,
     clearUnread,
     hasUnread,
     activeTab,
@@ -332,6 +451,13 @@ export const useSessionsStore = defineStore('sessions', () => {
     detachSession,
     setSizes,
     renameTab,
+    tabIdForPane,
+    paneIdForSession,
+    allPaneIds,
+    moveTab,
+    moveActiveTab,
+    mergeTabInto,
+    movePane,
     shouldAutoConnect,
     markConnected,
     persist,

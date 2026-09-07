@@ -1,7 +1,13 @@
-
-@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap');
+/*
+ * The Remotier palette lives in `tokens.css` as `--rm-*`. This file is the only place
+ * those tokens are allowed to meet shadcn's semantic names - components use
+ * `bg-background` / `text-muted-foreground`, never `var(--rm-shell)` directly, so the
+ * standard shadcn component set keeps working unmodified.
+ */
+@import "./tokens.css";
 
 @import "@fontsource-variable/geist";
+@import "@fontsource-variable/martian-mono";
 @import "@fontsource-variable/jetbrains-mono";
 
 @import "tailwindcss";
@@ -11,9 +17,23 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
+    /*
+     * Geist carries the interface. The two monospaced faces are accents only: JetBrains
+     * Mono for anything the shell produced (hostnames, keys, the terminal), Martian Mono
+     * for the wordmark. Setting a mono face as the body font makes ordinary UI text read
+     * as output, so `--font-sans` stays proportional. Point `--font-heading` at
+     * `--font-display` to move every shadcn title onto Martian Mono.
+     */
     --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
     --font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, monospace;
+    --font-display: 'Martian Mono Variable', ui-monospace, monospace;
     --font-heading: var(--font-sans);
+
+    /* `tracking-label` for the 10-11px uppercase labels, `tracking-display` for headings. */
+    --tracking-label: 0.16em;
+    --tracking-display: -0.025em;
+    --tracking-wordmark: -0.035em;
+
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -51,73 +71,69 @@
     --radius-xl: calc(var(--radius) + 4px);
 }
 
-:root {
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.145 0 0);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.145 0 0);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.205 0 0);
-    --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.97 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.97 0 0);
-    --muted-foreground: oklch(0.556 0 0);
-    --accent: oklch(0.97 0 0);
-    --accent-foreground: oklch(0.205 0 0);
-    --destructive: oklch(0.577 0.245 27.325);
-    --border: oklch(0.922 0 0);
-    --input: oklch(0.922 0 0);
-    --ring: oklch(0.708 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --radius: 0.625rem;
-    --sidebar: oklch(0.985 0 0);
-    --sidebar-foreground: oklch(0.145 0 0);
-    --sidebar-primary: oklch(0.205 0 0);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.97 0 0);
-    --sidebar-accent-foreground: oklch(0.205 0 0);
-    --sidebar-border: oklch(0.922 0 0);
-    --sidebar-ring: oklch(0.708 0 0);
+@theme {
+    /* 120ms state changes on `cubic-bezier(0.2, 0, 0, 1)`. No spring, no bounce. */
+    --default-transition-duration: var(--rm-dur-state);
+    --default-transition-timing-function: var(--rm-ease);
+    --ease-rm: var(--rm-ease);
 }
 
+/*
+ * Dark only - there is no light theme. `<html class="dark">` stays put because the shadcn
+ * component set carries `dark:` variants; both selectors resolve to the same palette so a
+ * stray unprefixed context cannot fall back to a white background.
+ */
+:root,
 .dark {
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --sidebar: oklch(0.205 0 0);
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.488 0.243 264.376);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.269 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.556 0 0);
+    --background: var(--rm-void);
+    --foreground: var(--rm-bone);
+    --card: var(--rm-shell);
+    --card-foreground: var(--rm-bone);
+    --popover: var(--rm-shell);
+    --popover-foreground: var(--rm-bone);
+    /* Lime is a signal, not a surface: reach for `variant="default"` once per view. */
+    --primary: var(--rm-lime);
+    --primary-foreground: var(--rm-on-lime);
+    /*
+     * `--rm-control`, not `--rm-raised`: raised is the hover/selected surface, one step off
+     * the canvas, so a secondary button filled with it would be invisible on black. Raised
+     * stays where the design puts it - `--muted` and `--accent`, the hover states.
+     */
+    --secondary: var(--rm-control);
+    --secondary-foreground: var(--rm-bone);
+    --muted: var(--rm-raised);
+    --muted-foreground: var(--rm-dim);
+    --accent: var(--rm-raised);
+    --accent-foreground: var(--rm-bone);
+    --destructive: var(--rm-error);
+    --border: var(--rm-rule);
+    --input: var(--rm-control);
+    --ring: var(--rm-lime);
+    --chart-1: var(--rm-lime);
+    --chart-2: var(--rm-warn);
+    --chart-3: var(--rm-error);
+    --chart-4: var(--rm-dim);
+    --chart-5: var(--rm-control);
+    --radius: 0.625rem;
+    --sidebar: var(--rm-shell);
+    --sidebar-foreground: var(--rm-ink-2);
+    --sidebar-primary: var(--rm-lime);
+    --sidebar-primary-foreground: var(--rm-on-lime);
+    --sidebar-accent: var(--rm-raised);
+    --sidebar-accent-foreground: var(--rm-bone);
+    --sidebar-border: var(--rm-rule);
+    --sidebar-ring: var(--rm-lime);
+}
+
+/*
+ * The nova preset stamps `cn-font-heading` onto every generated title (Card, Dialog,
+ * Sheet, Alert, AlertDialog, Empty) but never defines it, so titles silently inherit the
+ * body face. Defining it here is the single point that decides what a heading is set in -
+ * no generated file has to be touched to change it.
+ */
+@utility cn-font-heading {
+  font-family: var(--font-heading);
+  letter-spacing: var(--tracking-display);
 }
 
 @layer base {

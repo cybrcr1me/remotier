@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/sheet'
 import { errorMessage } from '@/lib/ipc'
 import AppearancePicker from './AppearancePicker.vue'
+import GroupPicker from '@/components/hosts/GroupPicker.vue'
 import { INHERIT, resolveInherited } from '@/lib/inherit'
 import { WG_USER_EXAMPLE } from '@/lib/placeholder'
 import type { AuthKind, Host, HostInput } from '@/lib/types'
@@ -60,6 +61,14 @@ const form = reactive({
   keyId: INHERIT,
   icon: 'server',
   color: 'default',
+})
+
+/** The picker speaks `string | null`; the form keeps the sentinel the rest of it uses. */
+const groupId = computed({
+  get: () => resolveInherited(form.groupId),
+  set: (value: string | null) => {
+    form.groupId = value ?? INHERIT
+  },
 })
 
 // Only send a password the user actually typed, so an untouched field keeps the stored one.
@@ -193,19 +202,7 @@ async function save() {
 
           <Field>
             <FieldLabel for="host-group">Group</FieldLabel>
-            <Select v-model="form.groupId">
-              <SelectTrigger id="host-group">
-                <SelectValue placeholder="No group" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  <SelectItem :value="INHERIT">No group</SelectItem>
-                  <SelectItem v-for="group in groups" :key="group.id" :value="group.id">
-                    {{ group.name }}
-                  </SelectItem>
-                </SelectGroup>
-              </SelectContent>
-            </Select>
+            <GroupPicker id="host-group" v-model="groupId" :groups="groups" />
           </Field>
 
           <Field :data-invalid="portInvalid ? '' : undefined">

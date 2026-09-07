@@ -208,6 +208,8 @@ export interface AgentKey {
 export type SessionEvent =
   | { kind: 'closed', sessionId: string, exitStatus: number | null }
   | { kind: 'failed', sessionId: string, message: string }
+  /** The connection died under us. The backend's watchdog found it, not the user. */
+  | { kind: 'lost', sessionId: string, message: string }
 
 /** Rust command errors arrive as tagged objects, never bare strings. */
 export type RemotierError =

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable'
 import type { HostKeyPrompt } from '@/lib/connect-flow'
+import type { DropZone } from '@/lib/dnd'
 import { isPane, type LayoutNode } from '@/lib/layout'
 import { cn } from '@/lib/utils'
 import { useSessionsStore } from '@/stores/sessions'
@@ -21,6 +22,7 @@ const sessions = useSessionsStore()
 
 const emit = defineEmits<{
   focusPane: [paneId: string]
+  dropOnPane: [paneId: string, zone: DropZone]
   resize: [splitId: string, sizes: number[]]
   hostKey: [prompt: HostKeyPrompt, decide: (choice: 'reject' | 'once' | 'save') => void]
   variables: [names: string[], decide: (values: Record<string, string> | null) => void]
@@ -47,6 +49,7 @@ const emit = defineEmits<{
       props.node.id === props.activePaneId && 'ring-1 ring-ring',
     )"
     @focus="emit('focusPane', props.node.id)"
+    @drop="zone => emit('dropOnPane', props.node.id, zone)"
     @host-key="(prompt, decide) => emit('hostKey', prompt, decide)"
     @variables="(names, decide) => emit('variables', names, decide)"
     @password="(prompt, decide) => emit('password', prompt, decide)"
@@ -66,6 +69,7 @@ const emit = defineEmits<{
           :active-pane-id="props.activePaneId"
           :tab-active="props.tabActive"
           @focus-pane="paneId => emit('focusPane', paneId)"
+          @drop-on-pane="(paneId, zone) => emit('dropOnPane', paneId, zone)"
           @resize="(splitId, sizes) => emit('resize', splitId, sizes)"
           @host-key="(prompt, decide) => emit('hostKey', prompt, decide)"
           @variables="(names, decide) => emit('variables', names, decide)"

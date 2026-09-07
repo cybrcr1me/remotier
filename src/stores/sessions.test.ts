@@ -436,3 +436,123 @@ describe('unread activity', () => {
     expect(store.unread.size).toBe(0)
   })
 })
+
+describe('rearranging tabs and panes', () => {
+  it('moves a tab to a new position in the bar', () => {
+    const store = useSessionsStore()
+    const a = store.openTab('a')
+    store.openTab('b')
+    const c = store.openTab('c')
+
+    store.moveTab(a.id, 3)
+    expect(store.tabs.map(t => t.name)).toEqual(['b', 'c', 'a'])
+
+    store.moveTab(c.id, 0)
+    expect(store.tabs.map(t => t.name)).toEqual(['c', 'b', 'a'])
+  })
+
+  it('ignores a move of a tab that is not open', () => {
+    const store = useSessionsStore()
+    store.openTab('a')
+    store.moveTab('missing', 0)
+    expect(store.tabs).toHaveLength(1)
+  })
+
+  it('merges one tab into another as a split', () => {
+    const store = useSessionsStore()
+    const target = store.openTab('target')
+    const source = store.openTab('source')
+    const sourcePane = source.activePaneId
+
+    store.mergeTabInto(source.id, target.id, target.activePaneId, 'right')
+
+    expect(store.tabs.map(t => t.id)).toEqual([target.id])
+    expect(listPanes(store.tabs[0].layout).map(p => p.id)).toContain(sourcePane)
+    expect(store.activeTabId).toBe(target.id)
+  })
+
+  it('does not disconnect anything when a tab is merged away', async () => {
+    const store = useSessionsStore()
+    const target = store.openTab('target')
+    const source = store.openTab('source')
+    store.attachSession(source.id, source.activePaneId, 'session-1')
+
+    store.mergeTabInto(source.id, target.id, target.activePaneId, 'bottom')
+    await Promise.resolve()
+
+    // The pane is still open, just somewhere else. Disconnecting it would be a bug.
+    expect(sshDisconnect).not.toHaveBeenCalled()
+    expect(listPanes(store.tabs[0].layout).some(p => p.sessionId === 'session-1')).toBe(true)
+  })
+
+  it('carries a whole split across rather than flattening it', () => {
+    const store = useSessionsStore()
+    const target = store.openTab('target')
+    const source = store.openTab('source')
+    store.splitActivePane('row')
+
+    const carried = listPanes(source.layout).map(p => p.id)
+    expect(carried).toHaveLength(2)
+
+    store.mergeTabInto(source.id, target.id, target.activePaneId, 'left')
+    const panes = listPanes(store.tabs[0].layout).map(p => p.id)
+    expect(panes).toEqual(expect.arrayContaining(carried))
+    expect(panes).toHaveLength(3)
+  })
+
+  it('refuses to merge a tab into itself', () => {
+    const store = useSessionsStore()
+    const tab = store.openTab('a')
+    store.mergeTabInto(tab.id, tab.id, tab.activePaneId, 'right')
+    expect(store.tabs).toHaveLength(1)
+  })
+
+  it('moves a pane between tabs and closes the tab it emptied', () => {
+    const store = useSessionsStore()
+    const target = store.openTab('target')
+    const source = store.openTab('source')
+    const moved = source.activePaneId
+
+    store.movePane(moved, target.activePaneId, 'bottom')
+
+    expect(store.tabs.map(t => t.id)).toEqual([target.id])
+    expect(listPanes(store.tabs[0].layout).map(p => p.id)).toContain(moved)
+  })
+
+  it('leaves the source tab open when it still has panes', () => {
+    const store = useSessionsStore()
+    const target = store.openTab('target')
+    const source = store.openTab('source')
+    const extra = store.splitActivePane('row')!
+
+    store.movePane(extra.id, target.activePaneId, 'right')
+
+    expect(store.tabs).toHaveLength(2)
+    expect(listPanes(source.layout)).toHaveLength(1)
+    expect(listPanes(target.layout).map(p => p.id)).toContain(extra.id)
+  })
+
+  it('reports which tab holds a pane, and every live pane', () => {
+    const store = useSessionsStore()
+    const a = store.openTab('a')
+    const b = store.openTab('b')
+
+    expect(store.tabIdForPane(a.activePaneId)).toBe(a.id)
+    expect(store.tabIdForPane('missing')).toBeNull()
+    expect(store.allPaneIds().sort()).toEqual([a.activePaneId, b.activePaneId].sort())
+  })
+
+  it('marks output against the tab a pane currently sits in', () => {
+    const store = useSessionsStore()
+    const target = store.openTab('target')
+    const source = store.openTab('source')
+    const moved = source.activePaneId
+
+    store.focusTab(target.id)
+    store.movePane(moved, target.activePaneId, 'right')
+
+    // The pane is in the visible tab now, so its output is not unread anywhere.
+    store.noteOutputFromPane(moved)
+    expect(store.hasUnread(target.id)).toBe(false)
+  })
+})

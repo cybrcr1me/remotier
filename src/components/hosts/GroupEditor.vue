@@ -60,8 +60,13 @@ const busy = ref(false)
 
 const nameInvalid = computed(() => form.name.trim().length === 0)
 
-/** Groups that may be the parent, excluding this one to avoid an obvious cycle. */
-const parentOptions = computed(() => groups.value.filter(g => g.id !== props.group?.id))
+/** The picker speaks `string | null`; the form keeps the sentinel the rest of it uses. */
+const parentId = computed({
+  get: () => resolveInherited(form.parentId),
+  set: (value: string | null) => {
+    form.parentId = value ?? INHERIT
+  },
+})
 
 const declared = computed(() =>
   props.group ? vars.defsForScope('group', props.group.id) : [],
@@ -159,19 +164,18 @@ async function setValue(name: string, value: string) {
 
           <Field>
             <FieldLabel for="group-parent">Parent group</FieldLabel>
-            <Select v-model="form.parentId">
-              <SelectTrigger id="group-parent">
-                <SelectValue placeholder="Top level" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  <SelectItem :value="INHERIT">Top level</SelectItem>
-                  <SelectItem v-for="group in parentOptions" :key="group.id" :value="group.id">
-                    {{ group.name }}
-                  </SelectItem>
-                </SelectGroup>
-              </SelectContent>
-            </Select>
+            <!--
+              `exclude` drops this group and everything under it: reparenting a group into
+              its own subtree makes a cycle, which `buildTree` survives only by dropping
+              the group - so it would simply disappear from the list.
+            -->
+            <GroupPicker
+              id="group-parent"
+              v-model="parentId"
+              :groups="groups"
+              :exclude="props.group?.id ?? null"
+              none-label="Top level"
+            />
           </Field>
 
           <AppearancePicker v-model:icon="form.icon" v-model:color="form.color" />

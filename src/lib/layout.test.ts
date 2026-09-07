@@ -4,7 +4,9 @@ import {
   createPane,
   findPane,
   findPaneBySession,
+  insertNode,
   listPanes,
+  movePane,
   relativePane,
   sessionIds,
   setSizes,
@@ -224,5 +226,125 @@ describe('findPaneBySession', () => {
 
     expect(findPaneBySession(tree, 'session-2')?.id).toBe(b.id)
     expect(findPaneBySession(tree, 'missing')).toBeNull()
+  })
+})
+
+describe('insertNode', () => {
+  it('splits a lone pane and honours the side', () => {
+    const target = createPane('a')
+    const incoming = createPane('b')
+
+    const left = asSplit(insertNode(target, target.id, incoming, 'left'))
+    expect(left.dir).toBe('row')
+    expect(left.children.map(c => c.id)).toEqual([incoming.id, target.id])
+
+    const bottom = asSplit(insertNode(target, target.id, incoming, 'bottom'))
+    expect(bottom.dir).toBe('col')
+    expect(bottom.children.map(c => c.id)).toEqual([target.id, incoming.id])
+  })
+
+  it('flattens into a parent that already runs the same way', () => {
+    const a = createPane('a')
+    const b = createPane('b')
+    const first = asSplit(insertNode(a, a.id, b, 'right'))
+
+    const c = createPane('c')
+    const flat = asSplit(insertNode(first, b.id, c, 'right'))
+
+    expect(flat.children).toHaveLength(3)
+    expect(flat.children.map(n => n.id)).toEqual([a.id, b.id, c.id])
+    expect(flat.sizes).toEqual([100 / 3, 100 / 3, 100 / 3])
+  })
+
+  it('nests when the direction differs from the parent', () => {
+    const a = createPane('a')
+    const b = createPane('b')
+    const row = asSplit(insertNode(a, a.id, b, 'right'))
+
+    const c = createPane('c')
+    const mixed = asSplit(insertNode(row, b.id, c, 'bottom'))
+
+    expect(mixed.dir).toBe('row')
+    const nested = asSplit(mixed.children[1])
+    expect(nested.dir).toBe('col')
+    expect(nested.children.map(n => n.id)).toEqual([b.id, c.id])
+  })
+
+  it('takes a whole subtree, not just a pane', () => {
+    const a = createPane('a')
+    const b = createPane('b')
+    const c = createPane('c')
+    const incoming = splitPane(b, b.id, 'col', c)
+
+    const merged = insertNode(a, a.id, incoming, 'right')
+    expect(listPanes(merged).map(p => p.id)).toEqual([a.id, b.id, c.id])
+  })
+
+  it('leaves the tree alone when the target is not in it', () => {
+    const a = createPane('a')
+    expect(insertNode(a, 'missing', createPane('b'), 'right')).toBe(a)
+  })
+})
+
+describe('movePane', () => {
+  /** a | b | c, left to right. */
+  function threeAcross() {
+    const a = createPane('a')
+    const b = createPane('b')
+    const c = createPane('c')
+    const tree = splitPane(splitPane(a, a.id, 'row', b), b.id, 'row', c)
+    return { a, b, c, tree }
+  }
+
+  it('reorders panes within one split', () => {
+    const { a, c, tree } = threeAcross()
+    const moved = movePane(tree, c.id, a.id, 'left')
+    expect(listPanes(moved).map(p => p.id)).toEqual([c.id, a.id, expect.any(String)])
+  })
+
+  it('keeps every pane, and only those panes', () => {
+    const { b, c, tree } = threeAcross()
+    const moved = movePane(tree, b.id, c.id, 'bottom')
+    expect(listPanes(moved).map(p => p.id).sort()).toEqual(listPanes(tree).map(p => p.id).sort())
+  })
+
+  it('changes the orientation when dropped on a horizontal edge', () => {
+    const { b, c, tree } = threeAcross()
+    const moved = asSplit(movePane(tree, b.id, c.id, 'bottom'))
+
+    // a and c stay side by side; b now sits under c.
+    expect(moved.dir).toBe('row')
+    const nested = asSplit(moved.children[1])
+    expect(nested.dir).toBe('col')
+    expect(nested.children.map(n => n.id)).toEqual([c.id, b.id])
+  })
+
+  it('collapses the split a pane leaves behind', () => {
+    const a = createPane('a')
+    const b = createPane('b')
+    const c = createPane('c')
+    // a on the left, b over c on the right.
+    const tree = splitPane(splitPane(a, a.id, 'row', b), b.id, 'col', c)
+
+    const moved = asSplit(movePane(tree, c.id, a.id, 'left'))
+    // The col split held only b once c left, so it is gone.
+    expect(moved.children.map(n => n.kind)).toEqual(['pane', 'pane', 'pane'])
+    expect(moved.dir).toBe('row')
+  })
+
+  it('refuses to move a pane onto itself', () => {
+    const { a, tree } = threeAcross()
+    expect(movePane(tree, a.id, a.id, 'left')).toBe(tree)
+  })
+
+  it('refuses to move the only pane in a tab', () => {
+    const only = createPane('a')
+    expect(movePane(only, only.id, 'anything', 'right')).toBe(only)
+  })
+
+  it('ignores an unknown pane or target', () => {
+    const { a, tree } = threeAcross()
+    expect(movePane(tree, 'missing', a.id, 'right')).toBe(tree)
+    expect(movePane(tree, a.id, 'missing', 'right')).toBe(tree)
   })
 })

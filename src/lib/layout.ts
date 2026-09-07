@@ -101,6 +101,86 @@ export function splitPane(
   }
 }
 
+/** Which side of a pane a dragged thing was dropped on. */
+export type DropEdge = 'left' | 'right' | 'top' | 'bottom'
+
+function dirOfEdge(edge: DropEdge): SplitNode['dir'] {
+  return edge === 'left' || edge === 'right' ? 'row' : 'col'
+}
+
+function insertsBefore(edge: DropEdge): boolean {
+  return edge === 'left' || edge === 'top'
+}
+
+/**
+ * Put `node` next to `targetPaneId`, on the given side.
+ *
+ * This is the general form of `splitPane`: the incoming node can be a whole subtree, and
+ * it can land on either side of the target. Same-direction splits flatten into the parent
+ * for the same reason they do there - dropping three times on the right should give three
+ * columns, not a staircase.
+ */
+export function insertNode(
+  root: LayoutNode,
+  targetPaneId: string,
+  node: LayoutNode,
+  edge: DropEdge,
+): LayoutNode {
+  const dir = dirOfEdge(edge)
+  const before = insertsBefore(edge)
+
+  if (isPane(root)) {
+    if (root.id !== targetPaneId) return root
+    return {
+      kind: 'split',
+      id: nextId('split'),
+      dir,
+      sizes: evenSizes(2),
+      children: before ? [node, root] : [root, node],
+    }
+  }
+
+  const index = root.children.findIndex(child => isPane(child) && child.id === targetPaneId)
+
+  if (index !== -1 && root.dir === dir) {
+    const children = [...root.children]
+    children.splice(before ? index : index + 1, 0, node)
+    return { ...root, children, sizes: evenSizes(children.length) }
+  }
+
+  return {
+    ...root,
+    children: root.children.map(child => insertNode(child, targetPaneId, node, edge)),
+  }
+}
+
+/**
+ * Move a pane that is already in the tree to a new position.
+ *
+ * The pane is lifted out first, so the target is located in the tree the pane has already
+ * left - otherwise dropping a pane next to its own sibling could reference a split that
+ * collapses the moment the pane is removed. Anything that would be a no-op or would lose
+ * the pane returns the tree untouched.
+ */
+export function movePane(
+  root: LayoutNode,
+  paneId: string,
+  targetPaneId: string,
+  edge: DropEdge,
+): LayoutNode {
+  if (paneId === targetPaneId) return root
+
+  const pane = findPane(root, paneId)
+  if (!pane) return root
+
+  const without = closePane(root, paneId)
+  // The pane was the only one there; moving it anywhere is a no-op.
+  if (!without) return root
+  if (!findPane(without, targetPaneId)) return root
+
+  return insertNode(without, targetPaneId, pane, edge)
+}
+
 /**
  * Remove a pane.
  *

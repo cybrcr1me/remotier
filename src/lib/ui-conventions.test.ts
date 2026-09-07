@@ -116,3 +116,62 @@ describe('terminal stacking', () => {
     expect(source).toMatch(/class="[^"]*\babsolute\b[^"]*\bz-\d+\b/)
   })
 })
+
+describe('stylesheet', () => {
+  const css = readFileSync(join(SRC, 'assets/index.css'), 'utf8')
+
+  it('pulls no stylesheet or font over the network', () => {
+    // `shadcn-vue add` re-injects a Google Fonts `@import url(...)` into this file every
+    // time it runs. The app's CSP is `default-src 'self'`, so the request is refused and
+    // the face silently falls back - the faces are installed from npm instead.
+    expect(css.match(/@import\s+url\(/g) ?? []).toEqual([])
+  })
+
+  it('defines the heading hook the nova preset leaves empty', () => {
+    // Seven generated titles carry `cn-font-heading`; nothing in the registry defines it.
+    expect(css).toMatch(/@utility\s+cn-font-heading\s*\{/)
+  })
+})
+
+describe('pane lifetime', () => {
+  const pane = readFileSync(join(SRC, 'components/terminal/TerminalPane.vue'), 'utf8')
+
+  it('does not dispose the terminal when the component unmounts', () => {
+    // The component unmounts both when a pane is closed and when it is dragged to another
+    // split or tab, and cannot tell those apart. Disposing here would drop the IPC channel
+    // and end the SSH session behind a pane that the user only moved.
+    const teardown = pane.match(/onBeforeUnmount\(\(\) => \{[\s\S]*?\n\}\)/)?.[0] ?? ''
+    expect(teardown).not.toMatch(/dispose\(/)
+  })
+
+  it('leaves disposal to the view that knows which panes are gone', () => {
+    const view = readFileSync(join(SRC, 'views/TerminalsView.vue'), 'utf8')
+    expect(view).toMatch(/releaseMissing\(/)
+  })
+})
+
+describe('tab dragging', () => {
+  it('does not make a tab active on mousedown', () => {
+    // Focusing on mousedown puts the tab's own panes on screen before its drag begins,
+    // so every pane the pointer then crosses belongs to the tab being dragged - and a tab
+    // cannot be dropped into itself. Focus on click, which a drag never produces.
+    const source = readFileSync(join(SRC, 'components/terminal/TabBar.vue'), 'utf8')
+    expect(source).not.toMatch(/@mousedown/)
+    expect(source).toMatch(/@click="sessions\.focusTab/)
+  })
+})
+
+describe('hosts breadcrumb', () => {
+  const view = readFileSync(join(SRC, 'views/HostsView.vue'), 'utf8')
+
+  it('shows the trail whenever the grid is on, not only inside a group', () => {
+    // A bar that appears only once you are inside a group shifts everything under it by
+    // its own height on the way in, and takes the way out with it on the way back.
+    expect(view).toMatch(/<div v-if="layout === 'grid'" class="[^"]*"\s*>/)
+    expect(view).not.toMatch(/v-if="layout === 'grid' && inFolder"/)
+  })
+
+  it('offers a way back to the root from inside a group', () => {
+    expect(view).toMatch(/goUpTo\(-1\)/)
+  })
+})

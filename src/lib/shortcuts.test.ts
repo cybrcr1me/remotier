@@ -56,3 +56,21 @@ describe('matchShortcut', () => {
     expect(matchShortcut(key({ key: 'v', metaKey: true }))).toBeNull()
   })
 })
+
+describe('moving the active tab', () => {
+  it('maps shifted brackets to a tab move, not a pane focus', () => {
+    expect(matchShortcut(key({ key: ']', metaKey: true, shiftKey: true }))).toBe('moveTabRight')
+    expect(matchShortcut(key({ key: '[', metaKey: true, shiftKey: true }))).toBe('moveTabLeft')
+  })
+
+  it('accepts the shifted characters the keyboard actually sends', () => {
+    // Most layouts report `}` rather than `]` when shift is held.
+    expect(matchShortcut(key({ key: '}', metaKey: true, shiftKey: true }))).toBe('moveTabRight')
+    expect(matchShortcut(key({ key: '{', metaKey: true, shiftKey: true }))).toBe('moveTabLeft')
+  })
+
+  it('leaves the unshifted brackets on pane focus', () => {
+    expect(matchShortcut(key({ key: ']', metaKey: true }))).toBe('nextPane')
+    expect(matchShortcut(key({ key: '[', metaKey: true }))).toBe('previousPane')
+  })
+})

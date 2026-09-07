@@ -19,23 +19,22 @@ import {
   type HostKeyPrompt,
   type PasswordPrompt,
 } from '@/lib/connect-flow'
+import { dropZone, zoneStyle, type DropZone } from '@/lib/dnd'
+import { beginDrag, canDropOnPane, dragging, endDrag, isOurDrag } from '@/lib/drag'
 import type { ConnectProgress } from '@/lib/types'
 import { useVarsStore } from '@/stores/vars'
 import { errorMessage, ipc } from '@/lib/ipc'
 import { readTerminalTheme, terminalFontFamily } from '@/lib/terminal-theme'
+import { cn } from '@/lib/utils'
+import { acquire, type PaneTerminal } from '@/lib/terminal-registry'
 import { useInventoryStore } from '@/stores/inventory'
 import { useSessionsStore } from '@/stores/sessions'
 import { useSettingsStore } from '@/stores/settings'
 import { Channel } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import { FitAddon } from '@xterm/addon-fit'
-import { SearchAddon } from '@xterm/addon-search'
-import { Unicode11Addon } from '@xterm/addon-unicode11'
-import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
-import { Terminal } from '@xterm/xterm'
-import { TerminalIcon } from '@lucide/vue'
-import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { GripVerticalIcon, TerminalIcon } from '@lucide/vue'
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { toast } from 'vue-sonner'
 import '@xterm/xterm/css/xterm.css'
 
@@ -53,6 +52,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   focus: []
+  /** A tab or pane was dropped on this pane, on the given side. */
+  drop: [zone: DropZone]
   hostKey: [prompt: HostKeyPrompt, decide: (choice: 'reject' | 'once' | 'save') => void]
   variables: [names: string[], decide: (values: Record<string, string> | null) => void]
   password: [
@@ -67,71 +68,92 @@ const settings = useSettingsStore()
 const vars = useVarsStore()
 
 const host = ref<HTMLDivElement | null>(null)
-const status = ref<'idle' | 'connecting' | 'connected' | 'error'>('idle')
-const error = ref<string | null>(null)
-const log = ref<LogEntry[]>([])
-const target = ref<string | null>(null)
 
-// shallowRef: these are large, self-managing objects that must not be made reactive.
-const terminal = shallowRef<Terminal | null>(null)
-const fit = shallowRef<FitAddon | null>(null)
+/*
+ * The terminal and everything the user can see about its connection belong to the pane,
+ * not to this component. Dragging a pane elsewhere in the tree remounts the component;
+ * were any of it held here, the move would dispose the terminal and end the session.
+ */
+// shallowRef: a large self-managing object that must not be made reactive.
+const pane = shallowRef<PaneTerminal | null>(null)
+
+const status = computed(() => pane.value?.status.value ?? 'idle')
+const error = computed(() => pane.value?.error.value ?? null)
+const log = computed<LogEntry[]>(() => pane.value?.log.value ?? [])
+const target = computed(() => pane.value?.target.value ?? null)
 
 let resizeObserver: ResizeObserver | null = null
 let resizeTimer: number | undefined
-/** WebGL is attached only once the element has a real size; see `measure`. */
-let acceleratorLoaded = false
+/** The pane's own name, taken from the same host label the tab bar shows. */
+const paneTitle = computed(() => {
+  if (!props.hostId) return 'No host'
+  return inventory.hostById.get(props.hostId)?.label ?? 'Unknown host'
+})
 
-function createTerminal() {
-  const term = new Terminal({
-    allowProposedApi: true,
-    cursorBlink: true,
-    fontFamily: terminalFontFamily(),
-    fontSize: Number(settings.get('terminal.fontSize')) || 13,
-    theme: readTerminalTheme(),
-    scrollback: 10_000,
-    macOptionIsMeta: true,
-  })
+/** The zone a drag is currently hovering, which is also the highlight to draw. */
+const hoverZone = ref<DropZone | null>(null)
 
-  const fitAddon = new FitAddon()
-  term.loadAddon(fitAddon)
-  term.loadAddon(new SearchAddon())
-  term.loadAddon(new WebLinksAddon())
-
-  const unicode = new Unicode11Addon()
-  term.loadAddon(unicode)
-  term.unicode.activeVersion = '11'
-
-  term.open(host.value!)
-
-  term.onData((data) => {
-    if (props.sessionId) void ipc.sshWrite(props.sessionId, encode(data))
-  })
-  term.onBinary((data) => {
-    if (props.sessionId) void ipc.sshWrite(props.sessionId, encodeBinary(data))
-  })
-
-  terminal.value = term
-  fit.value = fitAddon
+function acceptsDrop() {
+  return canDropOnPane(dragging.value, { tabId: props.tabId, paneId: props.paneId })
 }
 
-function encode(data: string) {
-  return new TextEncoder().encode(data)
+function onPaneDragStart(event: DragEvent) {
+  beginDrag({ kind: 'pane', paneId: props.paneId }, event)
 }
 
-/** xterm hands binary events over as a string of char codes, one byte each. */
-function encodeBinary(data: string) {
-  const bytes = new Uint8Array(data.length)
-  for (let i = 0; i < data.length; i += 1) bytes[i] = data.charCodeAt(i) & 0xff
-  return bytes
+function onDragOver(event: DragEvent) {
+  if (!isOurDrag(event) || !acceptsDrop()) return
+
+  event.preventDefault()
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
+
+  const box = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  hoverZone.value = dropZone(box, event.clientX, event.clientY)
+}
+
+/*
+ * The terminal fills this pane, so crossing into it raises `dragleave` on the pane. Only
+ * a move outside the pane entirely should clear the highlight.
+ */
+function onDragLeave(event: DragEvent) {
+  const next = event.relatedTarget as Node | null
+  const self = event.currentTarget as HTMLElement
+  if (next && self.contains(next)) return
+  hoverZone.value = null
+}
+
+function onDrop(event: DragEvent) {
+  const zone = hoverZone.value
+  hoverZone.value = null
+  if (!zone || !acceptsDrop()) return
+
+  event.preventDefault()
+  event.stopPropagation()
+  emit('drop', zone)
+}
+
+/** Borrow this pane's terminal, creating it the first time the pane is rendered. */
+function attachTerminal() {
+  pane.value = acquire(
+    props.paneId,
+    host.value!,
+    {
+      fontFamily: terminalFontFamily(),
+      fontSize: Number(settings.get('terminal.fontSize')) || 13,
+      theme: readTerminalTheme(),
+    },
+    { write: (_paneId, sessionId, data) => void ipc.sshWrite(sessionId, data) },
+  )
 }
 
 async function connect() {
-  const term = terminal.value
-  if (!term || !props.hostId || status.value === 'connecting') return
+  const entry = pane.value
+  if (!entry || !props.hostId || entry.status.value === 'connecting') return
 
-  status.value = 'connecting'
-  error.value = null
-  log.value = []
+  const term = entry.term
+  entry.status.value = 'connecting'
+  entry.error.value = null
+  entry.log.value = []
 
   // Correlates the progress events with this attempt; the session id does not exist yet.
   const attemptId = `${props.paneId}-${Date.now()}`
@@ -140,8 +162,8 @@ async function connect() {
   try {
     unlistenProgress = await listen<ConnectProgress>('ssh://progress', ({ payload }) => {
       if (payload.attemptId !== attemptId) return
-      if (payload.stage === 'connecting') target.value = `${payload.host}:${payload.port}`
-      log.value = appendEntry(log.value, infoEntry(describeStage(payload)))
+      if (payload.stage === 'connecting') entry.target.value = `${payload.host}:${payload.port}`
+      entry.log.value = appendEntry(entry.log.value, infoEntry(describeStage(payload)))
     })
   } catch (e) {
     // Losing progress reporting is not a reason to refuse to connect.
@@ -151,8 +173,10 @@ async function connect() {
   const onData = new Channel<ArrayBuffer>()
   onData.onmessage = (chunk) => {
     term.write(new Uint8Array(chunk))
-    // Drives the unread dot on tabs that are not currently visible.
-    sessions.noteOutput(props.tabId)
+    // Drives the unread dot. Asked by pane rather than told a tab id: this handler
+    // outlives the component, so a captured `props.tabId` would be wrong the moment the
+    // pane was dragged into another tab.
+    sessions.noteOutputFromPane(entry.paneId)
   }
 
   try {
@@ -190,12 +214,13 @@ async function connect() {
 
     sessions.attachSession(props.tabId, props.paneId, sessionId)
     sessions.markConnected(props.paneId)
-    status.value = 'connected'
+    entry.sessionId = sessionId
+    entry.status.value = 'connected'
     term.focus()
   } catch (e) {
-    status.value = 'error'
-    error.value = errorMessage(e)
-    log.value = appendEntry(log.value, errorEntry(error.value))
+    entry.status.value = 'error'
+    entry.error.value = errorMessage(e)
+    entry.log.value = appendEntry(entry.log.value, errorEntry(entry.error.value))
   } finally {
     unlistenProgress?.()
   }
@@ -208,16 +233,16 @@ async function connect() {
  * container leaves a canvas that never paints, which looks exactly like a connection
  * that produces no output.
  */
-function loadAccelerator(term: Terminal) {
-  if (acceleratorLoaded) return
-  acceleratorLoaded = true
+function loadAccelerator(entry: PaneTerminal) {
+  if (entry.acceleratorLoaded) return
+  entry.acceleratorLoaded = true
 
   // WebGL is the fast path but is unavailable in some VMs and remote sessions; xterm
   // falls back to its DOM renderer, so a failure here is not fatal.
   try {
     const webgl = new WebglAddon()
     webgl.onContextLoss(() => webgl.dispose())
-    term.loadAddon(webgl)
+    entry.term.loadAddon(webgl)
   } catch (e) {
     console.warn('WebGL renderer unavailable, falling back:', errorMessage(e))
   }
@@ -225,24 +250,25 @@ function loadAccelerator(term: Terminal) {
 
 /** Fit locally first so the grid is right, then tell the server. */
 function handleResize() {
-  const term = terminal.value
+  const entry = pane.value
   const element = host.value
-  if (!term || !fit.value || !element) return
+  if (!entry || !element) return
 
   // A zero-sized container yields a nonsensical grid; wait for a real layout.
   if (element.clientWidth === 0 || element.clientHeight === 0) return
 
-  fit.value.fit()
-  loadAccelerator(term)
+  entry.fit.fit()
+  loadAccelerator(entry)
 
   window.clearTimeout(resizeTimer)
   resizeTimer = window.setTimeout(() => {
-    if (props.sessionId) void ipc.sshResize(props.sessionId, term.cols, term.rows)
+    if (props.sessionId) void ipc.sshResize(props.sessionId, entry.term.cols, entry.term.rows)
   }, 80)
 }
 
 onMounted(() => {
-  createTerminal()
+  attachTerminal()
+  pane.value!.sessionId = props.sessionId
 
   resizeObserver = new ResizeObserver(handleResize)
   if (host.value) resizeObserver.observe(host.value)
@@ -250,13 +276,20 @@ onMounted(() => {
   // The observer covers the usual case; this catches a container that is already sized.
   requestAnimationFrame(handleResize)
 
-  if (props.hostId && props.autoConnect !== false) void connect()
+  // A pane that arrived here by being dragged is already connected, and a restored one
+  // is waiting for the user; neither should dial out again.
+  const fresh = status.value === 'idle' && !props.sessionId
+  if (fresh && props.hostId && props.autoConnect !== false) void connect()
 })
 
+/*
+ * Deliberately does not dispose the terminal. This runs both when a pane is closed and
+ * when it is merely dragged somewhere else, and the two are indistinguishable from here.
+ * `TerminalsView` disposes the terminals whose panes have actually gone.
+ */
 onBeforeUnmount(() => {
   window.clearTimeout(resizeTimer)
   resizeObserver?.disconnect()
-  terminal.value?.dispose()
 })
 
 // Focus follows the active pane, but only within the visible tab: a hidden tab must not
@@ -264,7 +297,7 @@ onBeforeUnmount(() => {
 watch(
   () => [props.active, props.tabActive] as const,
   ([active, tabActive]) => {
-    if (active && tabActive) terminal.value?.focus()
+    if (active && tabActive) pane.value?.term.focus()
   },
   { immediate: true },
 )
@@ -277,22 +310,71 @@ watch(
   },
 )
 
+// Mirrors the store onto the entry, which is what the terminal's own handlers read.
 watch(
   () => props.sessionId,
   (sessionId) => {
-    if (!sessionId && status.value === 'connected') status.value = 'idle'
+    const entry = pane.value
+    if (!entry) return
+    entry.sessionId = sessionId
+    // `lost` already explains itself; do not overwrite it with the blanker `idle`.
+    if (!sessionId && entry.status.value === 'connected') entry.status.value = 'idle'
   },
 )
 
-defineExpose({ focus: () => terminal.value?.focus(), connect })
+defineExpose({ focus: () => pane.value?.term.focus(), connect })
 </script>
 
 <template>
   <div
-    class="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-background"
+    class="group/pane relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-background"
     @mousedown="emit('focus')"
+    @dragover="onDragOver"
+    @dragleave="onDragLeave"
+    @drop="onDrop"
   >
     <div v-show="hostId" ref="host" class="isolate min-h-0 flex-1 px-2 pt-2" />
+
+    <!--
+      The pane's chip: what this pane is connected to, and its drag handle. Panes in a
+      split are otherwise indistinguishable once a shell has drawn over them, and a tab
+      title covering four panes cannot say which is which. It is shown for an empty pane too,
+      so a pane with no host yet can still be dragged somewhere useful.
+
+      The terminal owns click and selection across its whole
+      surface, so the pane cannot be `draggable` itself - dragging would take precedence
+      over selecting text, which is the thing people do in a terminal all day. A div
+      rather than a button: WebKit is unreliable about dragging form controls.
+    -->
+    <div
+      draggable="true"
+      role="button"
+      tabindex="0"
+      :class="cn(
+        'absolute right-1 top-1 z-20 flex max-w-[70%] cursor-grab items-center gap-1 rounded-md border bg-card px-1.5 py-0.5 text-xs transition-opacity active:cursor-grabbing',
+        'opacity-0 focus-visible:opacity-100 group-hover/pane:opacity-100',
+        active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
+      )"
+      :aria-label="`Move ${paneTitle}`"
+      :title="`Drag ${paneTitle} onto another pane's edge`"
+      @dragstart="onPaneDragStart"
+      @dragend="endDrag"
+    >
+      <GripVerticalIcon class="size-3 shrink-0" />
+      <span class="truncate">{{ paneTitle }}</span>
+    </div>
+
+    <!--
+      Where the dragged thing would land. `.xterm` paints its own layers up to z-index 10
+      without creating a stacking context, hence the isolated host above and z-20 here -
+      otherwise the terminal would cover the hint.
+    -->
+    <div
+      v-if="hoverZone"
+      class="pointer-events-none absolute z-20 border border-primary bg-primary/20 transition-all"
+      :style="zoneStyle(hoverZone)"
+      aria-hidden="true"
+    />
 
     <Empty v-if="!hostId" class="h-full">
       <EmptyHeader>

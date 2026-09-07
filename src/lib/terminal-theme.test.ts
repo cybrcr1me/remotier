@@ -11,7 +11,7 @@ const resolved: Record<string, string> = {
   'var(--background)': 'rgb(10, 10, 10)',
   'var(--foreground)': 'rgb(250, 250, 250)',
   'var(--primary)': 'rgb(120, 180, 255)',
-  'var(--accent)': 'rgb(60, 60, 60)',
+  'var(--muted-foreground)': 'rgb(126, 130, 126)',
 }
 
 const resolver: ColorResolver = expression => resolved[expression] ?? null
@@ -31,7 +31,7 @@ describe('buildTerminalTheme', () => {
   it('makes the selection translucent so text stays readable', () => {
     const theme = buildTerminalTheme(resolver, true)
 
-    expect(theme.selectionBackground).toBe('rgba(60, 60, 60, 0.35)')
+    expect(theme.selectionBackground).toBe('rgba(126, 130, 126, 0.35)')
     expect(theme.selectionForeground).toBeUndefined()
   })
 

@@ -27,6 +27,9 @@ import type {
   HostKeyPrompt,
   PasswordPrompt as PasswordPromptData,
 } from '@/lib/connect-flow'
+import type { DropZone } from '@/lib/dnd'
+import { dragging, endDrag } from '@/lib/drag'
+import { markLost, releaseMissing } from '@/lib/terminal-registry'
 import { useTerminalShortcuts } from '@/lib/shortcuts'
 import type { SessionEvent } from '@/lib/types'
 import { useInventoryStore } from '@/stores/inventory'
@@ -34,7 +37,7 @@ import { useSessionsStore } from '@/stores/sessions'
 import { listen } from '@tauri-apps/api/event'
 import { TerminalIcon } from '@lucide/vue'
 import { storeToRefs } from 'pinia'
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { toast } from 'vue-sonner'
 
 const sessions = useSessionsStore()
@@ -99,14 +102,51 @@ function openHost(hostId: string) {
   const pane = sessions.activePane
   if (!pane) return
 
+  // No renaming: a tab's title is derived from the panes it holds, so naming it after the
+  // first host would only leave a stale label behind once that pane moved or changed host.
   sessions.setPaneHost(tab.id, pane.id, hostId)
-  if (host && tab.name === 'New tab') sessions.renameTab(tab.id, host.label)
 }
 
 function newTab() {
   sessions.openTab()
   quickConnectOpen.value = true
 }
+
+/**
+ * Apply a drop onto a pane.
+ *
+ * A centre drop means "put it here", which for a tab is a plain reorder to the end of the
+ * bar rather than a split - splitting a pane with something dropped in its middle is the
+ * one arrangement nobody means.
+ */
+function onDropOnPane(targetTabId: string, targetPaneId: string, zone: DropZone) {
+  const payload = dragging.value
+  endDrag()
+  if (!payload) return
+
+  if (payload.kind === 'tab') {
+    if (zone === 'center') sessions.focusTab(payload.tabId)
+    else sessions.mergeTabInto(payload.tabId, targetTabId, targetPaneId, zone)
+    return
+  }
+
+  if (zone !== 'center') sessions.movePane(payload.paneId, targetPaneId, zone)
+}
+
+/*
+ * Dispose the terminals of panes that no longer exist anywhere.
+ *
+ * A pane's component unmounts both when it is closed and when it is dragged elsewhere, so
+ * the component cannot tell those apart - it deliberately disposes nothing. The layout is
+ * the only thing that knows, so cleanup is driven from here.
+ */
+watch(
+  // Joined, because `allPaneIds` builds a fresh array each time and would otherwise
+  // report a change on every keystroke that touches the layout.
+  () => sessions.allPaneIds().join('\u0000'),
+  () => releaseMissing(sessions.allPaneIds()),
+  { flush: 'post' },
+)
 
 useTerminalShortcuts({
   newTab,
@@ -122,13 +162,24 @@ useTerminalShortcuts({
   },
   nextPane: () => sessions.focusRelativePane(1),
   previousPane: () => sessions.focusRelativePane(-1),
+  moveTabLeft: () => sessions.moveActiveTab(-1),
+  moveTabRight: () => sessions.moveActiveTab(1),
 })
 
 let unlisten: (() => void) | null = null
 
 onMounted(async () => {
   unlisten = await listen<SessionEvent>('ssh://session', ({ payload }) => {
+    // A lost connection is the backend's watchdog reporting that a round trip failed, so
+    // the pane says so and offers to reconnect rather than quietly going blank. Marked
+    // before detaching: detaching is what clears the pane's session.
+    if (payload.kind === 'lost') {
+      const paneId = sessions.paneIdForSession(payload.sessionId)
+      if (paneId) markLost(paneId, payload.message)
+    }
+
     sessions.detachSession(payload.sessionId)
+
     if (payload.kind === 'failed') {
       toast.error('Session ended', { description: payload.message })
     }
@@ -159,6 +210,7 @@ onBeforeUnmount(() => unlisten?.())
         :active-pane-id="tab.activePaneId"
         :tab-active="tab.id === activeTabId"
         @focus-pane="sessions.focusPane"
+        @drop-on-pane="(paneId, zone) => onDropOnPane(tab.id, paneId, zone)"
         @resize="(splitId, sizes) => sessions.setSizes(tab.id, splitId, sizes)"
         @host-key="askAboutHostKey"
         @variables="askAboutVariables"

@@ -15,6 +15,8 @@ export interface TerminalActions {
   closePane: () => void
   nextPane: () => void
   previousPane: () => void
+  moveTabLeft: () => void
+  moveTabRight: () => void
 }
 
 /** The primary modifier: Command on macOS, Control elsewhere. */
@@ -43,10 +45,16 @@ export function matchShortcut(event: KeyboardEvent): keyof TerminalActions | nul
       return event.shiftKey ? 'splitCol' : 'splitRow'
     case 'w':
       return event.shiftKey ? null : 'closePane'
+    // Shifted brackets move the tab itself. Most layouts send the shifted character
+    // rather than the bracket, so both spellings are matched.
     case ']':
-      return 'nextPane'
+      return event.shiftKey ? 'moveTabRight' : 'nextPane'
     case '[':
-      return 'previousPane'
+      return event.shiftKey ? 'moveTabLeft' : 'previousPane'
+    case '}':
+      return 'moveTabRight'
+    case '{':
+      return 'moveTabLeft'
     default:
       return null
   }

@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import { buildTree, filterTree, flattenHosts, groupIds, treeHosts, type GroupNode } from './tree'
+import {
+  breadcrumb,
+  buildTree,
+  directHosts,
+  filterTree,
+  flattenHosts,
+  groupIds,
+  groupNodes,
+  nodesAt,
+  summarise,
+  treeHosts,
+  type GroupNode,
+} from './tree'
 import type { Group, Host } from '@/lib/types'
 
 function group(id: string, name: string, parentId: string | null = null): Group {
@@ -197,5 +209,97 @@ describe('flattenHosts', () => {
     ])
 
     expect(flattenHosts(filterTree(tree, 'web')).map(f => f.host.id)).toEqual(['h1'])
+  })
+})
+
+describe('browsing groups as folders', () => {
+  /**
+   * Production
+   *   Databases
+   *     db-1
+   *   web-1
+   * Staging
+   * loose-1  (no group)
+   */
+  const groups = [
+    group('prod', 'Production'),
+    group('db', 'Databases', 'prod'),
+    group('stage', 'Staging'),
+  ]
+  const hosts = [
+    host('db-1', 'db-1', 'db'),
+    host('web-1', 'web-1', 'prod'),
+    host('loose-1', 'loose-1'),
+  ]
+  const tree = buildTree(groups, hosts)
+
+  describe('nodesAt', () => {
+    it('returns the roots for an empty path', () => {
+      expect(nodesAt(tree, [])).toBe(tree)
+    })
+
+    it('descends one level', () => {
+      const inside = nodesAt(tree, ['prod'])
+      expect(inside?.map(n => n.id)).toEqual(['db', 'web-1'])
+    })
+
+    it('descends several levels', () => {
+      expect(nodesAt(tree, ['prod', 'db'])?.map(n => n.id)).toEqual(['db-1'])
+    })
+
+    it('returns null when a group in the path is gone', () => {
+      // A group deleted while the user was inside it. The caller falls back to the root
+      // rather than showing an empty folder it cannot name.
+      expect(nodesAt(tree, ['prod', 'missing'])).toBeNull()
+      expect(nodesAt(tree, ['missing'])).toBeNull()
+    })
+
+    it('refuses to treat a host as a folder', () => {
+      expect(nodesAt(tree, ['web-1'])).toBeNull()
+    })
+  })
+
+  describe('breadcrumb', () => {
+    it('is empty at the root', () => {
+      expect(breadcrumb(tree, [])).toEqual([])
+    })
+
+    it('names each group along the path, outermost first', () => {
+      expect(breadcrumb(tree, ['prod', 'db']).map(g => g.name)).toEqual(['Production', 'Databases'])
+    })
+
+    it('stops at the first id that does not resolve', () => {
+      // A stale path still produces a usable trail as far as it goes.
+      expect(breadcrumb(tree, ['prod', 'missing', 'db']).map(g => g.name)).toEqual(['Production'])
+    })
+  })
+
+  describe('summarise', () => {
+    it('counts every host inside, at any depth', () => {
+      const prod = tree.find((n): n is GroupNode => n.id === 'prod')!
+      expect(summarise(prod)).toEqual({ hosts: 2, groups: 1 })
+    })
+
+    it('counts only immediate subgroups, which is what opening it would show', () => {
+      const db = nodesAt(tree, ['prod'])!.find((n): n is GroupNode => n.id === 'db')!
+      expect(summarise(db)).toEqual({ hosts: 1, groups: 0 })
+    })
+
+    it('reports an empty group as empty', () => {
+      const stage = tree.find((n): n is GroupNode => n.id === 'stage')!
+      expect(summarise(stage)).toEqual({ hosts: 0, groups: 0 })
+    })
+  })
+
+  describe('splitting a level', () => {
+    it('separates the groups from the hosts at this level', () => {
+      expect(groupNodes(tree).map(g => g.id)).toEqual(['prod', 'stage'])
+      expect(directHosts(tree).map(h => h.host.id)).toEqual(['loose-1'])
+    })
+
+    it('does not descend for the hosts', () => {
+      // Hosts inside Production belong to Production's own folder, not to the root.
+      expect(directHosts(tree).map(h => h.host.id)).not.toContain('web-1')
+    })
   })
 })

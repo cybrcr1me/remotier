@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Button } from '@/components/ui/button'
+import { ButtonGroup } from '@/components/ui/button-group'
 import {
   Dialog,
   DialogContent,
@@ -11,7 +12,6 @@ import {
 import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { errorMessage } from '@/lib/ipc'
 import type { KeyAlgorithm } from '@/lib/types'
 import { useCredentialsStore } from '@/stores/credentials'
@@ -20,6 +20,11 @@ import { toast } from 'vue-sonner'
 
 const generateOpen = defineModel<boolean>('generateOpen', { required: true })
 const importOpen = defineModel<boolean>('importOpen', { required: true })
+
+const ALGORITHMS: { value: KeyAlgorithm, label: string }[] = [
+  { value: 'ed25519', label: 'Ed25519' },
+  { value: 'rsa', label: 'RSA 4096' },
+]
 
 const credentials = useCredentialsStore()
 const busy = ref(false)
@@ -108,10 +113,24 @@ async function runImport() {
 
         <Field>
           <FieldLabel>Algorithm</FieldLabel>
-          <ToggleGroup v-model="generate.algorithm" type="single" variant="outline">
-            <ToggleGroupItem value="ed25519">Ed25519</ToggleGroupItem>
-            <ToggleGroupItem value="rsa">RSA 4096</ToggleGroupItem>
-          </ToggleGroup>
+          <!--
+            Both buttons keep `variant="outline"` and the selected one is marked by its
+            fill alone. Switching the selected button to another variant would change its
+            border colour too, which breaks the seam the group draws between them.
+          -->
+          <ButtonGroup orientation="horizontal">
+            <Button
+              v-for="option in ALGORITHMS"
+              :key="option.value"
+              type="button"
+              variant="outline"
+              :aria-pressed="generate.algorithm === option.value"
+              :class="generate.algorithm === option.value && 'bg-secondary dark:bg-secondary text-foreground'"
+              @click="generate.algorithm = option.value"
+            >
+              {{ option.label }}
+            </Button>
+          </ButtonGroup>
           <FieldDescription>
             Ed25519 is smaller and faster. Choose RSA only for servers that require it.
           </FieldDescription>

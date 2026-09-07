@@ -18,6 +18,7 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc;
 
 use crate::error::{Error, Result};
+use crate::ssh::liveness::{sleep_or_suspend, Wakeup};
 
 /// Flush pending output after this long, even if little has arrived.
 const FLUSH_INTERVAL: Duration = Duration::from_millis(4);
@@ -26,6 +27,14 @@ const FLUSH_BYTES: usize = 64 * 1024;
 /// Bound on queued input, so a wedged connection cannot grow memory without limit.
 const INPUT_QUEUE: usize = 256;
 
+/// How often the watchdog proves the connection is still there.
+const PING_INTERVAL: Duration = Duration::from_secs(30);
+/// How long the server has to answer a ping before the link is called dead.
+///
+/// Generous enough for a slow link that has just come back, short enough that nobody is
+/// left typing into a terminal that is not connected to anything.
+const PING_TIMEOUT: Duration = Duration::from_secs(10);
+
 pub const SESSION_EVENT: &str = "ssh://session";
 
 #[derive(Debug)]
@@ -33,6 +42,8 @@ pub enum Command {
     Data(Vec<u8>),
     Resize { cols: u32, rows: u32 },
     Close,
+    /// The watchdog found the connection dead. Carries what to tell the user.
+    Lost(String),
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -44,6 +55,14 @@ pub enum SessionEvent {
         exit_status: Option<u32>,
     },
     Failed {
+        session_id: String,
+        message: String,
+    },
+    /// The connection died under us, rather than the shell exiting.
+    ///
+    /// Separate from `Failed` so the UI can offer to reconnect instead of reporting a
+    /// failure the user did nothing to cause.
+    Lost {
         session_id: String,
         message: String,
     },
@@ -110,17 +129,27 @@ pub fn spawn(
     on_data: IpcChannel<InvokeResponseBody>,
 ) {
     let (tx, rx) = mpsc::channel(INPUT_QUEUE);
-    sessions.insert(id.clone(), tx);
+    let handle = std::sync::Arc::new(handle);
+
+    sessions.insert(id.clone(), tx.clone());
+    tauri::async_runtime::spawn(watchdog(id.clone(), handle.clone(), tx));
 
     tauri::async_runtime::spawn(async move {
-        let outcome = pump(&id, handle, channel, &on_data, rx).await;
+        let outcome = pump(&id, &handle, channel, &on_data, rx).await;
         sessions.remove(&id);
 
         let event = match outcome {
-            Ok(exit_status) => SessionEvent::Closed {
+            Ok(Ended::Shell { exit_status }) => SessionEvent::Closed {
                 session_id: id.clone(),
                 exit_status,
             },
+            Ok(Ended::Lost { message }) => {
+                log::info!("session {id} lost: {message}");
+                SessionEvent::Lost {
+                    session_id: id.clone(),
+                    message,
+                }
+            }
             Err(e) => {
                 log::warn!("session {id} ended with an error: {e}");
                 SessionEvent::Failed {
@@ -136,16 +165,25 @@ pub fn spawn(
     });
 }
 
+/// How a session came to an end.
+enum Ended {
+    /// The remote shell finished, or the channel was closed from either side.
+    Shell { exit_status: Option<u32> },
+    /// The watchdog found the connection gone.
+    Lost { message: String },
+}
+
 async fn pump(
     id: &str,
-    handle: russh::client::Handle<crate::ssh::client::Handler>,
+    handle: &russh::client::Handle<crate::ssh::client::Handler>,
     mut channel: SshChannel<Msg>,
     on_data: &IpcChannel<InvokeResponseBody>,
     mut rx: mpsc::Receiver<Command>,
-) -> Result<Option<u32>> {
+) -> Result<Ended> {
     let mut pending: Vec<u8> = Vec::with_capacity(FLUSH_BYTES);
     let mut flush_at: Option<tokio::time::Instant> = None;
     let mut exit_status = None;
+    let mut lost: Option<String> = None;
 
     loop {
         tokio::select! {
@@ -156,6 +194,10 @@ async fn pump(
                     Some(Command::Data(data)) => channel.data(&data[..]).await?,
                     Some(Command::Resize { cols, rows }) => {
                         channel.window_change(cols, rows, 0, 0).await?;
+                    }
+                    Some(Command::Lost(message)) => {
+                        lost = Some(message);
+                        break;
                     }
                     // Either an explicit disconnect or the last sender going away.
                     Some(Command::Close) | None => break,
@@ -204,7 +246,69 @@ async fn pump(
         .await;
 
     log::debug!("session {id} closed (exit status {exit_status:?})");
-    Ok(exit_status)
+    Ok(match lost {
+        Some(message) => Ended::Lost { message },
+        None => Ended::Shell { exit_status },
+    })
+}
+
+/// Prove, repeatedly, that the connection is still there.
+///
+/// russh's own keepalive counts in monotonic time, which stops while the machine is
+/// suspended - so after a wake it needs another couple of minutes before it notices a
+/// connection that died hours ago. This watches both clocks, re-tests immediately when the
+/// machine has been asleep, and otherwise checks on a fixed interval, which also catches a
+/// link lost while awake.
+///
+/// The ping runs here rather than in the pump's `select!` loop because waiting up to
+/// [`PING_TIMEOUT`] for a reply inside that loop would stall terminal output for every
+/// other message.
+async fn watchdog(
+    id: String,
+    handle: std::sync::Arc<russh::client::Handle<crate::ssh::client::Handler>>,
+    tx: mpsc::Sender<Command>,
+) {
+    loop {
+        let wakeup = sleep_or_suspend(PING_INTERVAL).await;
+
+        // The session ended on its own; the pump has already reported why.
+        if handle.is_closed() || tx.is_closed() {
+            return;
+        }
+
+        // A ping is the only honest test: a connection dropped while the machine slept
+        // still looks open from this side until something expects an answer.
+        if matches!(
+            tokio::time::timeout(PING_TIMEOUT, handle.send_ping()).await,
+            Ok(Ok(()))
+        ) {
+            continue;
+        }
+
+        let message = match wakeup {
+            Wakeup::Suspended(gap) => format!(
+                "The connection did not survive the machine sleeping for {}.",
+                describe(gap)
+            ),
+            Wakeup::Elapsed => "The server stopped responding.".to_string(),
+        };
+
+        log::info!("session {id} failed its liveness check: {message}");
+        let _ = tx.send(Command::Lost(message)).await;
+        return;
+    }
+}
+
+/// A duration in the roundest terms that are still true, for a sentence.
+fn describe(gap: Duration) -> String {
+    let minutes = gap.as_secs() / 60;
+    match minutes {
+        0 => "less than a minute".to_string(),
+        1 => "a minute".to_string(),
+        2..=59 => format!("{minutes} minutes"),
+        60..=119 => "an hour".to_string(),
+        _ => format!("{} hours", minutes / 60),
+    }
 }
 
 async fn sleep_until(deadline: Option<tokio::time::Instant>) {

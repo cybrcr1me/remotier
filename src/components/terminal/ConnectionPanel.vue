@@ -16,7 +16,7 @@ import { PlugZapIcon, TriangleAlertIcon } from '@lucide/vue'
 import { computed } from 'vue'
 
 const props = defineProps<{
-  status: 'idle' | 'connecting' | 'connected' | 'error'
+  status: 'idle' | 'connecting' | 'connected' | 'checking' | 'lost' | 'error'
   entries: LogEntry[]
   error: string | null
   target: string | null
@@ -26,14 +26,28 @@ const emit = defineEmits<{ retry: [] }>()
 
 const title = computed(() => {
   if (props.status === 'connecting') return 'Connecting…'
+  if (props.status === 'checking') return 'Checking the connection…'
+  if (props.status === 'lost') return 'Connection lost'
   if (props.status === 'error') return 'Could not connect'
   return 'Not connected'
 })
 
 const description = computed(() => {
+  // The backend's watchdog says why: a suspend it can measure, or a server that stopped
+  // answering. It knows which; this does not need to guess.
+  if (props.status === 'lost') return props.error ?? 'The connection is gone.'
   if (props.status === 'error' && props.error) return props.error
   if (props.target) return props.target
   return 'This pane is not connected yet.'
+})
+
+/** Nothing to do but wait while a connection is being made or verified. */
+const busy = computed(() => props.status === 'connecting' || props.status === 'checking')
+
+const action = computed(() => {
+  if (props.status === 'lost') return 'Reconnect'
+  if (props.status === 'error') return 'Try again'
+  return 'Connect'
 })
 </script>
 
@@ -47,8 +61,8 @@ const description = computed(() => {
       <Empty class="flex-none border-none p-0">
         <EmptyHeader>
           <EmptyMedia variant="icon">
-            <Spinner v-if="props.status === 'connecting'" />
-            <TriangleAlertIcon v-else-if="props.status === 'error'" />
+            <Spinner v-if="busy" />
+            <TriangleAlertIcon v-else-if="props.status === 'error' || props.status === 'lost'" />
             <PlugZapIcon v-else />
           </EmptyMedia>
 
@@ -56,17 +70,17 @@ const description = computed(() => {
           <EmptyDescription
             :class="cn(
               props.status === 'error' && 'text-destructive',
-              props.status !== 'error' && props.target && 'font-mono text-xs',
+              props.status !== 'error' && props.status !== 'lost' && props.target && 'font-mono text-xs',
             )"
           >
             {{ description }}
           </EmptyDescription>
         </EmptyHeader>
 
-        <EmptyContent v-if="props.status !== 'connecting'">
+        <EmptyContent v-if="!busy">
           <Button size="sm" variant="secondary" @click="emit('retry')">
             <PlugZapIcon data-icon="inline-start" />
-            {{ props.status === 'error' ? 'Try again' : 'Connect' }}
+            {{ action }}
           </Button>
         </EmptyContent>
       </Empty>
