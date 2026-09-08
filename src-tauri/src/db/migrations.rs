@@ -533,6 +533,41 @@ ALTER TABLE sync_state ADD COLUMN account_secret_ref TEXT;
 ALTER TABLE sync_state ADD COLUMN access_token_ref TEXT;
 ALTER TABLE sync_state ADD COLUMN refresh_token_ref TEXT;
 "#,
+    // 9 - track the records that already existed.
+    //
+    // `sync_meta` is maintained by triggers, and a trigger only fires on a write. Every
+    // row created before migration 5 ran therefore had no tracking row at all, so
+    // `collect` found nothing dirty and the first sync uploaded nothing - on an account
+    // that had signed in perfectly well. Sync appeared to do nothing whatsoever, which is
+    // exactly what it was doing.
+    //
+    // Everything is marked dirty so the first cycle after this pushes the lot. On a
+    // machine that is signed out it costs nothing: nothing is pushed until there is an
+    // account to push to.
+    r#"
+INSERT OR IGNORE INTO sync_meta (kind, id, local_dirty, updated_at, group_id)
+    SELECT 'host', id, 1, updated_at, group_id FROM hosts;
+
+INSERT OR IGNORE INTO sync_meta (kind, id, local_dirty, updated_at, group_id)
+    SELECT 'group', id, 1, updated_at, id FROM groups;
+
+INSERT OR IGNORE INTO sync_meta (kind, id, local_dirty, updated_at, group_id)
+    SELECT 'identity', id, 1, updated_at, NULL FROM identities;
+
+INSERT OR IGNORE INTO sync_meta (kind, id, local_dirty, updated_at, group_id)
+    SELECT 'var_def', id, 1, updated_at,
+           CASE WHEN scope = 'group' THEN scope_id END
+      FROM var_defs;
+
+INSERT OR IGNORE INTO sync_meta (kind, id, local_dirty, updated_at, group_id)
+    SELECT 'workspace', id, 1, updated_at, NULL FROM workspaces;
+
+-- Settings are filtered by the allow-list in `sync/settings.rs` when they are collected,
+-- so tracking all of them here is harmless and keeps this statement free of a list that
+-- would then exist in two places.
+INSERT OR IGNORE INTO sync_meta (kind, id, local_dirty, updated_at, group_id)
+    SELECT 'setting', key, 1, updated_at, NULL FROM settings;
+"#,
 ];pub fn apply(conn: &mut Connection) -> Result<()> {
     let current: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     let target = MIGRATIONS.len() as i64;
@@ -989,6 +1024,7 @@ mod tests {
         "ed4ae499ea8f4d148fee02f882d4dd4cb94ee1a418c475aa659d83ae19ff5c99",  // 6
         "48e5a9223a756b84283ef4f4945d3725ff042889809a0314c76d9ab38d8c0f1c",  // 7
         "25fc38322ff7817e92be9a6a7c2c97a4af67a811360984cc298303ec550e8920",  // 8
+        "9581b7892d5d51fb52b9196869dd5f370197352283642dad3bd66ca686b91ec3",  // 9
     ];
 
     fn fingerprint(sql: &str) -> String {
@@ -1020,5 +1056,121 @@ mod tests {
             MIGRATIONS.len() >= APPLIED.len(),
             "a migration was removed; databases that ran it cannot be downgraded"
         );
+    }
+
+    #[test]
+    fn records_that_predate_sync_are_tracked_by_the_backfill() {
+        // The bug this pins: `sync_meta` is trigger-maintained, and a trigger only fires
+        // on a write. Everything created before sync existed had no tracking row, so
+        // `collect` found nothing dirty and the first sync uploaded nothing at all - on
+        // an account that had signed in successfully. It looked like sync was dead.
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        conn.pragma_update(None, "recursive_triggers", true).unwrap();
+
+        // Stop at v4, the last version before sync tracking existed.
+        for (version, sql) in MIGRATIONS.iter().enumerate().take(4) {
+            conn.execute_batch(sql).unwrap();
+            conn.pragma_update(None, "user_version", version as i64 + 1)
+                .unwrap();
+        }
+
+        insert_group(&conn, "g1", None);
+        insert_host(&conn, "h1", Some("g1"));
+        insert_host(&conn, "h2", None);
+        conn.execute(
+            "INSERT INTO identities (id, label, username, auth_kind, created_at, updated_at)
+             VALUES ('i1', 'ops', 'root', 'agent', 100, 100)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO var_defs (id, scope, scope_id, name, required, created_at, updated_at)
+             VALUES ('d1', 'group', 'g1', 'wg_user', 1, 100, 100)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO workspaces (id, name, layout_json, created_at, updated_at)
+             VALUES ('w1', 'Deploy', '{}', 100, 100)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('terminal.fontSize', '14')",
+            [],
+        )
+        .unwrap();
+
+        apply(&mut conn).unwrap();
+
+        for (kind, id) in [
+            ("group", "g1"),
+            ("host", "h1"),
+            ("host", "h2"),
+            ("identity", "i1"),
+            ("var_def", "d1"),
+            ("workspace", "w1"),
+            ("setting", "terminal.fontSize"),
+        ] {
+            let dirty: Option<i64> = conn
+                .query_row(
+                    "SELECT local_dirty FROM sync_meta WHERE kind = ?1 AND id = ?2",
+                    rusqlite::params![kind, id],
+                    |r| r.get(0),
+                )
+                .ok();
+            assert_eq!(
+                dirty,
+                Some(1),
+                "{kind} {id} predates sync and was never marked for upload"
+            );
+        }
+
+        // And the group each record belongs to came across, so a record inside a shared
+        // group is sealed with the right key on that first push.
+        let group: Option<String> = conn
+            .query_row(
+                "SELECT group_id FROM sync_meta WHERE kind = 'host' AND id = 'h1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(group.as_deref(), Some("g1"));
+
+        let scoped: Option<String> = conn
+            .query_row(
+                "SELECT group_id FROM sync_meta WHERE kind = 'var_def' AND id = 'd1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(scoped.as_deref(), Some("g1"));
+    }
+
+    #[test]
+    fn the_backfill_does_not_disturb_records_already_pushed() {
+        // Running the backfill over a database that has already synced would re-upload
+        // everything if it overwrote the flags, and would lose the server sequence.
+        let conn = configured();
+        insert_host(&conn, "h1", None);
+        conn.execute(
+            "UPDATE sync_meta SET local_dirty = 0, server_seq = 42 WHERE kind = 'host'",
+            [],
+        )
+        .unwrap();
+
+        // Migration 9 is INSERT OR IGNORE, so replaying it must change nothing.
+        conn.execute_batch(MIGRATIONS[8]).unwrap();
+
+        let (dirty, seq): (i64, Option<i64>) = conn
+            .query_row(
+                "SELECT local_dirty, server_seq FROM sync_meta WHERE kind = 'host' AND id = 'h1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(dirty, 0, "an already-pushed record was marked dirty again");
+        assert_eq!(seq, Some(42), "the server sequence was lost");
     }
 }

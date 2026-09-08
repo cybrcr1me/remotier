@@ -53,7 +53,7 @@ sha2 = "0.10"
 #
 # Hosted on GitHub, not crates.io, and fetched anonymously - see `.cargo/config.toml`
 # at the repository root for why cargo is told to fetch it with the git CLI.
-remotier-sync-proto = { git = "https://github.com/cybrcr1me/remotier-sync", rev = "93e43d504a8ea7c0fd7b29c40f368b1ff8d95819" }
+remotier-sync-proto = { git = "https://github.com/cybrcr1me/remotier-sync", rev = "a95a502306e9ba3d60edd4aeb806f5fb08efe4df" }
 
 # `rustls` on `ring`, explicitly. reqwest's plain `rustls-tls` feature pulls rustls's
 # default provider, which is aws-lc-rs - CMake and NASM on Windows, the same reason
