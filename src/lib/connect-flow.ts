@@ -44,6 +44,8 @@ export interface ConnectFlowOptions {
    * the password, or `null` if the user cancelled.
    */
   askForPassword?: (prompt: PasswordPrompt) => Promise<string | null>
+  /** Called when a security key refuses to sign without its PIN. */
+  askForPin?: () => Promise<string | null>
 }
 
 const POLICY_FOR: Record<Exclude<HostKeyDecision, 'reject'>, HostKeyPolicy> = {
@@ -83,14 +85,22 @@ export async function connectWithHostKeyPrompt(options: ConnectFlowOptions): Pro
     askAboutVariables,
     saveVariables,
     askForPassword,
+    askForPin,
   } = options
 
   // Unresolved variables and a missing password are both collected before the connection
   // is attempted, so they are handled ahead of the host key.
   let attempt: ConnectRequest = { ...request, policy: 'strict' }
   let askedForPassword = false
+  let askedForPin = false
+  let askedAboutHostKey = false
 
-  for (let round = 0; round < 3; round += 1) {
+  /*
+   * One round per thing that can be asked, plus the attempt that succeeds: variables, the
+   * host key, a password and a PIN can all come up on the same connection, and each guard
+   * below makes sure none of them can be asked twice.
+   */
+  for (let round = 0; round < 5; round += 1) {
     try {
       return await connect(attempt)
     } catch (error) {
@@ -118,10 +128,27 @@ export async function connectWithHostKeyPrompt(options: ConnectFlowOptions): Pro
         continue
       }
 
+      // The token asked for its PIN. A key file's flags do not reliably say whether one
+      // is set, so this is only knowable by having been refused once.
+      if (tagged?.kind === 'pinRequired' && askForPin && !askedForPin) {
+        askedForPin = true
+        const pin = await askForPin()
+        if (pin === null) {
+          throw new ConnectCancelled('Connection cancelled: no PIN was given.')
+        }
+        attempt = { ...attempt, pin }
+        continue
+      }
+
       if (tagged?.kind !== 'unknownHostKey') {
         // Changed keys, auth failures and everything else propagate untouched.
         throw error
       }
+
+      if (askedAboutHostKey) {
+        throw error
+      }
+      askedAboutHostKey = true
 
       const { host, fingerprint } = tagged as HostKeyPrompt & { kind: string }
       const decision = await askAboutHostKey({ host, fingerprint })
@@ -130,8 +157,17 @@ export async function connectWithHostKeyPrompt(options: ConnectFlowOptions): Pro
         throw new HostKeyRejected(fingerprint)
       }
 
-      attempt = { ...request, policy: POLICY_FOR[decision] }
-      return await connect(attempt)
+      /*
+       * Spread `attempt`, not `request`: anything already collected - a password, a
+       * security key's PIN - has to survive being asked about the host key, or it is
+       * thrown away and asked for again.
+       *
+       * And loop rather than connecting here: this attempt can raise a prompt of its own,
+       * which only the loop knows how to answer. Returning straight from here is why a
+       * hardware key on an unknown host failed with no PIN prompt at all.
+       */
+      attempt = { ...attempt, policy: POLICY_FOR[decision] }
+      continue
     }
   }
 

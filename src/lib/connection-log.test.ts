@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  actionEntry,
+  isAction,
   MAX_ENTRIES,
   appendEntry,
   describeStage,
@@ -67,5 +69,22 @@ describe('appendEntry', () => {
 describe('formatTime', () => {
   it('renders a wall clock time', () => {
     expect(formatTime(new Date(2026, 0, 2, 14, 3, 22).getTime())).toBe('14:03:22')
+  })
+})
+
+describe('a step that waits on the user', () => {
+  it('describes the touch stage', () => {
+    expect(describeStage({ stage: 'touchRequired' })).toBe('Touch your security key')
+  })
+
+  it('marks only the stages the user has to act on', () => {
+    expect(isAction({ stage: 'touchRequired' })).toBe(true)
+    expect(isAction({ stage: 'connecting', host: 'h', port: 22 })).toBe(false)
+    expect(isAction({ stage: 'ready' })).toBe(false)
+  })
+
+  it('records an action at its own level', () => {
+    const entry = actionEntry('Touch your security key', 1000)
+    expect(entry).toEqual({ at: 1000, level: 'action', message: 'Touch your security key' })
   })
 })

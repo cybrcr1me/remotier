@@ -49,6 +49,9 @@ fn key_path() -> String {
 fn target(auth: AuthMaterial) -> Target {
     isolate_known_hosts();
     Target {
+        agent_socket: None,
+        pin: None,
+        typed_password: None,
         host_id: "test".into(),
         label: "test".into(),
         hostname: HOST.into(),
@@ -186,7 +189,7 @@ async fn resizing_a_live_pty_is_accepted() {
 #[tokio::test]
 #[ignore = "needs the dockerised sshd and an ssh-agent holding the test key"]
 async fn connects_using_the_ssh_agent() {
-    let keys = remotier_lib::ssh::agent::identities()
+    let keys = remotier_lib::ssh::agent::identities(None)
         .await
         .expect("an ssh-agent must be reachable");
     assert!(
@@ -196,6 +199,7 @@ async fn connects_using_the_ssh_agent() {
     );
 
     let target = target(AuthMaterial::Agent {
+        socket: None,
         public_openssh: None,
     });
     let connection = connect::open(&target, HostKeyPolicy::TrustOnce, "xterm-256color", 80, 24, &|_| {})
@@ -250,7 +254,7 @@ async fn resolves_a_stored_host_and_connects_with_its_sealed_password() {
     })
     .unwrap();
 
-    let resolved = resolve::target(&db, &vault, &host_id, None).expect("resolve the stored host");
+    let resolved = resolve::target(&db, &vault, &host_id, None, None).expect("resolve the stored host");
     assert_eq!(resolved.port, PORT, "the port must be inherited from the group");
 
     let connection = connect::open(&resolved, HostKeyPolicy::TrustOnce, "xterm-256color", 80, 24, &|_| {})
@@ -317,7 +321,7 @@ async fn connects_through_a_group_with_a_username_placeholder() {
     // Without a value the connection must be refused, naming what is missing.
     let preview = resolve::preview(&db, &host_id).unwrap();
     assert_eq!(preview.missing_variables, vec!["wg_user"]);
-    assert!(resolve::target(&db, &vault, &host_id, None).is_err());
+    assert!(resolve::target(&db, &vault, &host_id, None, None).is_err());
 
     // This user's own answer, stored locally.
     db.write(|tx| {
@@ -330,7 +334,7 @@ async fn connects_through_a_group_with_a_username_placeholder() {
     })
     .unwrap();
 
-    let target = resolve::target(&db, &vault, &host_id, None).expect("resolve after filling the variable");
+    let target = resolve::target(&db, &vault, &host_id, None, None).expect("resolve after filling the variable");
     assert_eq!(target.username, USER, "the placeholder must be substituted");
     assert_eq!(target.port, PORT);
 
@@ -359,6 +363,7 @@ async fn reports_each_connection_stage_in_order() {
                 Stage::Connecting { .. } => "connecting",
                 Stage::HostKeyAccepted { .. } => "hostKeyAccepted",
                 Stage::Authenticating { .. } => "authenticating",
+                Stage::TouchRequired => "touchRequired",
                 Stage::Authenticated { .. } => "authenticated",
                 Stage::OpeningShell { .. } => "openingShell",
                 Stage::Ready => "ready",
@@ -447,7 +452,7 @@ async fn connects_with_credentials_set_directly_on_the_host() {
         .unwrap();
     assert_eq!(identities, 0);
 
-    let target = resolve::target(&db, &vault, &host_id, None).expect("resolve host credentials");
+    let target = resolve::target(&db, &vault, &host_id, None, None).expect("resolve host credentials");
     assert_eq!(target.username, USER);
 
     let connection = connect::open(&target, HostKeyPolicy::TrustOnce, "xterm-256color", 80, 24, &|_| {})

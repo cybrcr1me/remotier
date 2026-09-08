@@ -322,3 +322,120 @@ describe('password prompt', () => {
     ).rejects.toMatchObject({ kind: 'passwordRequired' })
   })
 })
+
+describe('security key PIN', () => {
+  it('asks for a PIN when the token refuses, then retries with it', async () => {
+    const attempts: (string | undefined)[] = []
+    const connect = vi.fn(async (attempt: ConnectRequest) => {
+      attempts.push(attempt.pin)
+      if (attempt.pin === undefined) throw { kind: 'pinRequired', message: 'needs its PIN' }
+      return 'session-1'
+    })
+
+    const id = await connectWithHostKeyPrompt({
+      request: request,
+      connect,
+      askAboutHostKey: async () => 'reject',
+      askForPin: async () => '1234',
+    })
+
+    expect(id).toBe('session-1')
+    expect(attempts).toEqual([undefined, '1234'])
+  })
+
+  it('gives up when the PIN prompt is cancelled', async () => {
+    const connect = vi.fn(async () => {
+      throw { kind: 'pinRequired', message: 'needs its PIN' }
+    })
+
+    await expect(connectWithHostKeyPrompt({
+      request: request,
+      connect,
+      askAboutHostKey: async () => 'reject',
+      askForPin: async () => null,
+    })).rejects.toThrow(ConnectCancelled)
+  })
+
+  it('does not ask twice for a PIN that was refused', async () => {
+    // A second prompt for the same wrong PIN is a loop, not a recovery.
+    const askForPin = vi.fn(async () => '0000')
+    const connect = vi.fn(async () => {
+      throw { kind: 'pinRequired', message: 'needs its PIN' }
+    })
+
+    await expect(connectWithHostKeyPrompt({
+      request: request,
+      connect,
+      askAboutHostKey: async () => 'reject',
+      askForPin,
+    })).rejects.toBeDefined()
+
+    expect(askForPin).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('prompts that arrive together', () => {
+  it('asks for the PIN after a host key decision', async () => {
+    // The reported failure: an unknown host plus a hardware key. The host key branch used
+    // to connect directly instead of looping, so the PIN request had nowhere to be handled.
+    const seen: ConnectRequest[] = []
+    const connect = vi.fn(async (attempt: ConnectRequest) => {
+      seen.push(attempt)
+      if (attempt.policy !== 'trustOnce') throw unknownHostKey()
+      if (attempt.pin === undefined) throw { kind: 'pinRequired', message: 'needs its PIN' }
+      return 'session-1'
+    })
+
+    const id = await connectWithHostKeyPrompt({
+      request,
+      connect,
+      askAboutHostKey: async () => 'once',
+      askForPin: async () => '1234',
+    })
+
+    expect(id).toBe('session-1')
+    expect(seen.map(a => [a.policy, a.pin])).toEqual([
+      ['strict', undefined],
+      ['trustOnce', undefined],
+      ['trustOnce', '1234'],
+    ])
+  })
+
+  it('keeps a password already given when the host key is then queried', async () => {
+    // Spreading the original request here would throw the password away and ask again.
+    const seen: ConnectRequest[] = []
+    const connect = vi.fn(async (attempt: ConnectRequest) => {
+      seen.push(attempt)
+      if (attempt.password === undefined) {
+        throw { kind: 'passwordRequired', message: 'needs a password', username: 'u', host: 'h' }
+      }
+      if (attempt.policy !== 'trustOnce') throw unknownHostKey()
+      return 'session-1'
+    })
+
+    await connectWithHostKeyPrompt({
+      request,
+      connect,
+      askAboutHostKey: async () => 'once',
+      askForPassword: async () => 'hunter2',
+    })
+
+    expect(seen[seen.length - 1].password).toBe('hunter2')
+    expect(seen[seen.length - 1].policy).toBe('trustOnce')
+  })
+
+  it('does not ask about the same host key twice', async () => {
+    const askAboutHostKey = vi.fn(async () => 'once' as const)
+    const connect = vi.fn(async () => {
+      throw unknownHostKey()
+    })
+
+    await expect(connectWithHostKeyPrompt({
+      request,
+      connect,
+      askAboutHostKey,
+    })).rejects.toBeDefined()
+
+    expect(askAboutHostKey).toHaveBeenCalledTimes(1)
+  })
+})

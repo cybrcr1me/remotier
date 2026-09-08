@@ -6,6 +6,8 @@ export const DEFAULT_SETTINGS = {
   'terminal.fontSize': '13',
   'terminal.term': 'xterm-256color',
   'ssh.defaultPort': '22',
+  // Blank means "whatever SSH_AUTH_SOCK points at", which is right on most machines.
+  'ssh.agentSocket': '',
   'session.autoReconnect': 'false',
   'appearance.theme': 'dark',
 } as const

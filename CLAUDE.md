@@ -67,6 +67,149 @@ and only secret-touching commands fail. Never make it panic in `setup()`.
 - Terminal output goes over `tauri::ipc::Channel` as `InvokeResponseBody::Raw`, coalesced
   at 4ms / 64KB. Never move it onto Tauri events.
 
+### Hardware-backed keys
+
+### A rejected key falls back
+
+### The connect retry loop
+
+`connect-flow.ts` answers everything a connection can ask for - unresolved variables, an
+unknown host key, a password, a security key's PIN - and any of them can come up on the
+same attempt. Two rules keep that working:
+
+- **Every branch spreads `attempt`, never `request`.** Spreading the original throws away
+  what earlier rounds collected, so a password given before the host key was queried is
+  lost and asked for again.
+- **Every branch `continue`s.** Connecting directly from a branch leaves the loop, and a
+  prompt raised by *that* attempt has nowhere to be handled. This is exactly how an unknown
+  host plus a hardware key failed with no PIN prompt at all: the host key branch returned
+  its own `connect` call, so the `pinRequired` it raised escaped unanswered.
+
+Each prompt is guarded so it cannot be asked twice, and the loop is bounded at one round
+per prompt plus the attempt that succeeds.
+
+When the server turns a key down, `after_key_rejected` asks what it will still accept and
+acts on the answer, which is what OpenSSH does. A key that is simply not in
+`authorized_keys` on this host would otherwise fail outright on a host that would happily
+take a password.
+
+- Password or keyboard-interactive still offered, and a password already typed: it is
+  tried.
+- Offered but nothing typed yet: `PasswordRequired`, so the UI prompts and retries.
+- Nothing but public keys offered: say so, rather than prompting for a password the server
+  would refuse anyway.
+
+`Target::typed_password` exists for this. It carries a password the user typed even when
+the host authenticates with a key, which is the only way the retry can use it - the key
+arms of `AuthMaterial` have nowhere else to put it.
+
+A FIDO key - `sk-ssh-ed25519@openssh.com` or `sk-ecdsa-sha2-nistp256@openssh.com`, what
+`ssh-keygen -t ed25519-sk` writes for a YubiKey - stores only a credential handle on disk.
+The private scalar never leaves the token.
+
+`ssh-key` parses such a file perfectly well and then cannot sign with it: `KeypairData`'s
+`Signer` has no arm for the SK types and falls through to "unsupported algorithm". The
+failure surfaces as the server rejecting a key that is plainly in `authorized_keys`, which
+sends you looking in the wrong place entirely.
+
+So `connect.rs` checks the algorithm **before** decrypting - the public half of an OpenSSH
+private key is cleartext even when the secret is encrypted, and a token key needs no
+passphrase from us anyway - and routes these to `authenticate_agent`, matching on the
+public half. The agent can sign because it talks to the token. If the agent has not got it,
+the error says so and says what to run.
+
+russh does advertise both SK algorithms, so the agent path negotiates correctly.
+
+`PublicKeyInfo.hardwareBacked` carries this to the UI, which badges such keys in the
+keychain: a FIDO key looks like any other key file, and importing one would otherwise
+produce a key nothing in the app can use. Their row offers **Add to agent**
+(`ssh_agent_add` → `agent::add_to_agent`, which shells out to `ssh-add`) instead of the
+usual "Use this", because there is no secret in the file to adopt.
+
+`ssh-add` is invoked with no flag for a key file and `-K` for resident keys, and a 60s
+timeout - the token has to be touched while it runs.
+
+**PINs.** The first attempt runs with `SSH_ASKPASS_REQUIRE=never`, so a key that wants a
+PIN fails at once instead of blocking on a prompt with no terminal to appear on. That
+failure opens a PIN dialog and retries - the same try-then-prompt shape as the password
+prompt on connect, and for the same reason: most `sk-` keys are touch-only, so demanding a
+PIN up front would be a prompt with no answer.
+
+The retry writes a throwaway `SSH_ASKPASS` helper. **The PIN is never in that file** - the
+script echoes an environment variable set only on the `ssh-add` child, so the secret is
+never on disk and never on a command line where `ps` would show it. The helper lives in a
+0700 directory, is deleted on `Drop`, and its directory name carries a per-instance counter
+as well as the pid: two keys can be added at once, and a shared directory would have one
+helper's cleanup delete the other's script mid-touch. Unit tests cover all three.
+
+Windows has no askpass shell script, so a PIN there still needs a terminal.
+
+**Which agent.** `ssh.agentSocket` overrides `SSH_AUTH_SOCK` (blank uses the environment's).
+This is not a nicety: macOS hands every GUI app launchd's agent, and Apple's OpenSSH ships
+no `ssh-sk-helper`, so that agent accepts a FIDO key with `ssh-add` and then answers every
+sign request with `SSH_AGENT_FAILURE`. Without the setting a GUI app cannot be pointed at a
+Homebrew agent that does have the helper, so hardware keys are simply unusable. It also
+covers 1Password, Secretive and gpg-agent. `Target::agent_socket` carries it even on key
+auth, because a stored key can turn out to be token-backed.
+
+**In-process FIDO signing** lives in `ssh/fido.rs`, over CTAP2 via `ctap-hid-fido2`. Its
+only C dependency is `hidapi`, which vendors its source and builds with `cc` - no CMake, no
+NASM, no OpenSSL, which is the same constraint that chose `ring` over `aws-lc-rs`.
+
+The signature format is OpenSSH's PROTOCOL.u2f: `string alg`, `string sig`, `byte flags`,
+`uint32 counter`. Two details are load-bearing and both are tested:
+
+- The **flags byte is copied out of the raw authenticator data**, not rebuilt from the
+  parsed struct. The verifier recomputes `sha256(rpId) || flags || counter || challenge`,
+  so a byte that merely means the same thing does not verify.
+- The **counter is big-endian**. Little-endian verifies on the machine that wrote it and
+  nowhere else, which is the worst way for this to be wrong.
+
+A token refusing for want of a PIN comes back as `Error::PinRequired`, distinct from a
+generic failure, because it is recoverable by asking - and a key file's `verify-required`
+flag does not reliably predict it.
+
+`Stage::TouchRequired` is emitted before the assertion so the wait is visible: the panel
+shows "Touch your security key" in lime with a spinner. It is the one stage blocked on the
+user rather than on us, hence its own `action` level in `connection-log.ts` - and the
+spinner is dropped as soon as another line follows, because by then the wait is over.
+
+**A `verify-required` credential is asked for its PIN before the token is touched.** An
+authenticator does not treat such a credential as merely locked: it hides it from any
+assertion that is not performing verification and answers `CTAP2_ERR_NO_CREDENTIALS`, which
+reads as "wrong key" rather than "needs a PIN". The key file's flags say so up front
+(`0x04`), so `sign` returns `PinRequired` without contacting the token at all - which is
+also a touch the user would otherwise waste.
+
+**Do not use `get_assertion`.** Its args default to `uv: Some(true)`, demanding user
+verification on every assertion, which a token without it configured answers with
+`CTAP2_ERR_INVALID_OPTION` - so the convenience wrapper cannot sign an ordinary touch-only
+key at all. `sign` builds the args itself: `up` always, `uv` never asked for directly, and
+a PIN supplied through `.pin()`, which conveys verification and clears the option. This is
+what OpenSSH does.
+
+**`Signer::auth_sign` returns the request with the signature appended, not the signature.**
+russh writes whatever comes back as the packet, so returning the bare signature makes the
+server see a malformed message and disconnect - with no auth failure to report, which looks
+from the app like nothing happened at all. The signature is appended to the buffer russh
+supplied, length-prefixed, exactly as the agent path frames it: the declared length is
+`name.len() + sig.len() + 8 + 5` for an `sk-` signature, and a test pins the blob to that.
+
+`fido::TokenSigner` implements russh's `Signer` - the same seam the agent client plugs
+into - so `authenticate_publickey_with` drives the token exactly as it would drive an
+agent. `sk-` keys no longer touch the agent at all. Signing runs on `spawn_blocking`,
+because it blocks for as long as the user takes to touch the token.
+
+russh's `Signer::Error` carries nothing useful, so the signer keeps the real error and the
+caller reads it back with `take_failure`; without that every token problem would arrive as
+"authentication failed".
+
+**PINs** travel the same road as passwords: the token refuses, `Error::PinRequired` reaches
+the frontend, `connect-flow.ts` prompts once and retries with `request.pin`. Once, not
+repeatedly - a second prompt for a PIN just refused is a loop, not a recovery. The PIN is
+never stored, and is only asked for after a refusal because a key file's `verify-required`
+flag does not reliably predict it.
+
 ### Live SSH tests
 
 `src-tauri/tests/ssh_live.rs` is `#[ignore]`d so `cargo test` stays hermetic. To run it:
@@ -240,6 +383,12 @@ Fonts: Geist carries the interface. The monospaced faces are **accents only** - 
 Mono (`font-mono`) for anything the shell produced (hostnames, paths, fingerprints,
 placeholders, the terminal), Martian Mono (`font-display`) for the wordmark. A mono body
 font makes ordinary UI text read as terminal output, so `--font-sans` stays proportional.
+
+`vue-sonner` needs its own stylesheet, imported in `index.css`. Without it a toast has no
+surface, no position and no stacking - it lands as bare text in the document flow, which is
+what "the notification is broken" looks like. `Sonner.vue` only feeds it colour variables
+and gives no hint that the stylesheet is missing, and `shadcn-vue add sonner` does not add
+it. `ui-conventions.test.ts` fails if the import goes.
 
 `shadcn-vue add` re-injects a Google Fonts `@import url(...)` at the top of `index.css`
 every time it runs - confirmed again when `breadcrumb` was added. Delete it: the CSP is `default-src 'self'`, so the request is refused

@@ -178,6 +178,8 @@ export interface ConnectRequest {
   term?: string
   /** Used for this connection only; never stored. */
   password?: string
+  /** A security key's PIN, for this connection only; never stored. */
+  pin?: string
   /** Correlates `ssh://progress` events with the pane that started this attempt. */
   attemptId: string
 }
@@ -187,6 +189,8 @@ export interface PublicKeyInfo {
   fingerprint: string
   comment: string
   openssh: string
+  /** A FIDO key. The secret lives on a token, so it only works through the ssh-agent. */
+  hardwareBacked: boolean
 }
 
 /** A key pair discovered in `~/.ssh`, left where it is. */
@@ -217,6 +221,7 @@ export type RemotierError =
   | { kind: 'changedHostKey', message: string, host: string, fingerprint: string, line: number }
   | { kind: 'unresolvedVariables', message: string, variables: string[] }
   | { kind: 'passwordRequired', message: string, username: string, host: string }
+  | { kind: 'pinRequired', message: string }
   | { kind: string, message: string }
 
 /** A `Host` block read from `~/.ssh/config`. */
@@ -255,6 +260,7 @@ export type ConnectStage =
   | { stage: 'connecting', host: string, port: number }
   | { stage: 'hostKeyAccepted', fingerprint: string }
   | { stage: 'authenticating', method: string, username: string }
+  | { stage: 'touchRequired' }
   | { stage: 'authenticated', method: string }
   | { stage: 'openingShell', term: string }
   | { stage: 'ready' }

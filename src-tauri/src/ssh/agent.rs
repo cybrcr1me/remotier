@@ -20,13 +20,23 @@ pub type DynAgentClient = AgentClient<Box<dyn AgentStream + Send + Unpin + 'stat
 ///
 /// Fails when no agent is running or `SSH_AUTH_SOCK` is unset, which is an ordinary
 /// situation rather than a bug - callers fall back to another auth method.
-pub async fn connect() -> Result<DynAgentClient> {
+pub async fn connect(socket: Option<&str>) -> Result<DynAgentClient> {
     #[cfg(unix)]
     {
-        let client = AgentClient::connect_env()
-            .await
-            .map_err(|e| Error::Ssh(format!("no ssh-agent available: {e}")))?;
-        Ok(client.dynamic())
+        // An explicit socket exists because the environment's agent is not always the one
+        // that can help: macOS hands every GUI app launchd's agent, and Apple's build has
+        // no `ssh-sk-helper`, so it cannot sign for a FIDO key however the key got in.
+        let client = match socket {
+            Some(path) => AgentClient::connect_uds(path)
+                .await
+                .map_err(|e| Error::Ssh(format!("no ssh-agent at {path}: {e}")))?
+                .dynamic(),
+            None => AgentClient::connect_env()
+                .await
+                .map_err(|e| Error::Ssh(format!("no ssh-agent available: {e}")))?
+                .dynamic(),
+        };
+        Ok(client)
     }
 
     #[cfg(windows)]
@@ -54,8 +64,8 @@ pub struct AgentKey {
 }
 
 /// Public keys the agent is holding.
-pub async fn identities() -> Result<Vec<AgentKey>> {
-    let mut client = connect().await?;
+pub async fn identities(socket: Option<&str>) -> Result<Vec<AgentKey>> {
+    let mut client = connect(socket).await?;
     let identities = client
         .request_identities()
         .await

@@ -10,6 +10,13 @@
 @import "@fontsource-variable/martian-mono";
 @import "@fontsource-variable/jetbrains-mono";
 
+/*
+ * vue-sonner ships its own stylesheet and does nothing useful without it: the toast has no
+ * surface, no position and no stacking, so it renders as bare text in the normal document
+ * flow. shadcn's `Sonner.vue` only feeds it colour variables - it does not replace this.
+ */
+@import "vue-sonner/style.css";
+
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn-vue/tailwind.css";

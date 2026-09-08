@@ -20,6 +20,7 @@ import {
 import QuickConnect from '@/components/terminal/QuickConnect.vue'
 import SplitView from '@/components/terminal/SplitView.vue'
 import PasswordPrompt from '@/components/terminal/PasswordPrompt.vue'
+import PinPrompt from '@/components/terminal/PinPrompt.vue'
 import VariablePrompt from '@/components/terminal/VariablePrompt.vue'
 import TabBar from '@/components/terminal/TabBar.vue'
 import type {
@@ -70,6 +71,20 @@ function answerPassword(answer: PasswordAnswer) {
   passwordPrompt.value = null
   passwordDecide?.(answer)
   passwordDecide = null
+}
+
+const pinOpen = ref(false)
+let pinDecide: ((pin: string | null) => void) | null = null
+
+function askForPin(decide: (pin: string | null) => void) {
+  pinOpen.value = true
+  pinDecide = decide
+}
+
+function answerPin(pin: string | null) {
+  pinOpen.value = false
+  pinDecide?.(pin)
+  pinDecide = null
 }
 
 const variableNames = ref<string[]>([])
@@ -215,6 +230,7 @@ onBeforeUnmount(() => unlisten?.())
         @host-key="askAboutHostKey"
         @variables="askAboutVariables"
         @password="askForPassword"
+        @pin="askForPin"
       />
     </div>
 
@@ -238,6 +254,8 @@ onBeforeUnmount(() => unlisten?.())
       @submit="answerVariables"
       @cancel="answerVariables(null)"
     />
+
+    <PinPrompt :open="pinOpen" @submit="answerPin" @cancel="answerPin(null)" />
 
     <PasswordPrompt
       :prompt="passwordPrompt"

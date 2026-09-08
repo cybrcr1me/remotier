@@ -23,6 +23,8 @@ pub enum Error {
     Ssh(String),
     #[error("authentication failed: {0}")]
     Auth(String),
+    #[error("the security key needs its PIN")]
+    PinRequired,
     #[error("host key for {host} is not known (fingerprint {fingerprint})")]
     UnknownHostKey { host: String, fingerprint: String },
     #[error("HOST KEY CHANGED for {host}: got {fingerprint}, known_hosts line {line}")]
@@ -77,6 +79,7 @@ impl Error {
             Error::UnresolvedVariables(_) => "unresolvedVariables",
             Error::Ssh(_) => "ssh",
             Error::Auth(_) => "auth",
+            Error::PinRequired => "pinRequired",
             Error::UnknownHostKey { .. } => "unknownHostKey",
             Error::ChangedHostKey { .. } => "changedHostKey",
             Error::NoSession(_) => "noSession",

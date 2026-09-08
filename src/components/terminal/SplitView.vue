@@ -30,6 +30,7 @@ const emit = defineEmits<{
     prompt: { username: string, host: string },
     decide: (answer: { password: string, remember: boolean } | null) => void,
   ]
+  pin: [decide: (pin: string | null) => void]
 }>()
 </script>
 
@@ -53,6 +54,7 @@ const emit = defineEmits<{
     @host-key="(prompt, decide) => emit('hostKey', prompt, decide)"
     @variables="(names, decide) => emit('variables', names, decide)"
     @password="(prompt, decide) => emit('password', prompt, decide)"
+    @pin="decide => emit('pin', decide)"
   />
 
   <ResizablePanelGroup
@@ -74,6 +76,7 @@ const emit = defineEmits<{
           @host-key="(prompt, decide) => emit('hostKey', prompt, decide)"
           @variables="(names, decide) => emit('variables', names, decide)"
           @password="(prompt, decide) => emit('password', prompt, decide)"
+          @pin="decide => emit('pin', decide)"
         />
       </ResizablePanel>
     </template>

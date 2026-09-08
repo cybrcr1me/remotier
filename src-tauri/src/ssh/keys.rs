@@ -82,6 +82,34 @@ pub fn parse_private(pem: &str, passphrase: Option<&str>) -> Result<PrivateKey> 
         .map_err(|_| Error::Invalid("wrong passphrase for this key".into()))
 }
 
+/// True for a key whose secret half lives on a hardware token rather than in the file.
+///
+/// FIDO keys - `sk-ssh-ed25519@openssh.com` and `sk-ecdsa-sha2-nistp256@openssh.com`, what
+/// `ssh-keygen -t ed25519-sk` writes for a YubiKey - store only a credential handle and the
+/// relying-party name on disk. The private scalar never leaves the token, so `ssh-key` can
+/// parse the file perfectly well and then fail to sign with it: `KeypairData`'s `Signer`
+/// has no arm for these and falls through to "unsupported algorithm".
+///
+/// Signing therefore has to be delegated to something that can talk to the token, which
+/// for our purposes means the ssh-agent.
+pub fn is_hardware_backed(algorithm: &Algorithm) -> bool {
+    matches!(
+        algorithm,
+        Algorithm::SkEd25519 | Algorithm::SkEcdsaSha2NistP256
+    )
+}
+
+/// The algorithm of a private key, read without decrypting it.
+///
+/// An OpenSSH private key carries its public half in cleartext even when the secret is
+/// encrypted, so this answers "is this a token key?" without a passphrase - which matters,
+/// because a token key needs no passphrase from us at all.
+pub fn private_algorithm(pem: &str) -> Result<Algorithm> {
+    PrivateKey::from_openssh(pem)
+        .map(|key| key.algorithm())
+        .map_err(|e| Error::Invalid(format!("not a valid OpenSSH private key: {e}")))
+}
+
 pub fn is_encrypted(pem: &str) -> bool {
     PrivateKey::from_openssh(pem).is_ok_and(|key| key.is_encrypted())
 }
@@ -93,6 +121,8 @@ pub struct PublicKeyInfo {
     pub fingerprint: String,
     pub comment: String,
     pub openssh: String,
+    /// True for a FIDO key, which can only be used through the ssh-agent.
+    pub hardware_backed: bool,
 }
 
 pub fn describe_public(line: &str) -> Result<PublicKeyInfo> {
@@ -107,6 +137,7 @@ fn info_from_public(key: &PublicKey) -> PublicKeyInfo {
         fingerprint: key.fingerprint(HashAlg::Sha256).to_string(),
         comment: key.comment().to_string(),
         openssh: key.to_openssh().unwrap_or_default(),
+        hardware_backed: is_hardware_backed(&key.algorithm()),
     }
 }
 
@@ -173,6 +204,36 @@ pub fn scan(dir: &Path) -> Result<Vec<DiscoveredKey>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fido_algorithms_are_hardware_backed() {
+        assert!(is_hardware_backed(&Algorithm::SkEd25519));
+        assert!(is_hardware_backed(&Algorithm::SkEcdsaSha2NistP256));
+    }
+
+    #[test]
+    fn ordinary_algorithms_are_not() {
+        // These can be signed with in-process, which is the whole distinction.
+        assert!(!is_hardware_backed(&Algorithm::Ed25519));
+        assert!(!is_hardware_backed(&Algorithm::Rsa { hash: None }));
+    }
+
+    #[test]
+    fn reads_the_algorithm_without_a_passphrase() {
+        // The public half of an OpenSSH private key is cleartext even when the secret is
+        // encrypted, which is what lets a token key be recognised before anyone is asked
+        // for a passphrase it does not have.
+        let generated = generate(KeyAlgorithm::Ed25519, "test@remotier").unwrap();
+        assert_eq!(
+            private_algorithm(&generated.private_openssh).unwrap(),
+            Algorithm::Ed25519
+        );
+    }
+
+    #[test]
+    fn rejects_something_that_is_not_a_private_key() {
+        assert!(private_algorithm("not a key").is_err());
+    }
 
     #[test]
     fn generates_an_ed25519_key_that_round_trips() {

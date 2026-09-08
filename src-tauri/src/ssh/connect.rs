@@ -7,6 +7,7 @@ use russh::client::{self, Handle};
 use russh::keys::ssh_key::PublicKey;
 use russh::keys::PrivateKeyWithHashAlg;
 use russh::Channel as SshChannel;
+use russh::client::AuthResult;
 
 use serde::Serialize;
 
@@ -14,7 +15,9 @@ use crate::error::{Error, Result};
 use crate::ssh::client::{Handler, HostKeyPolicy};
 use crate::ssh::known_hosts::Verdict;
 use crate::ssh::resolve::{AuthMaterial, Target, DEFAULT_TERM};
-use crate::ssh::{agent, keys};
+use zeroize::Zeroizing;
+
+use crate::ssh::{agent, fido, keys};
 
 /// Keep NAT and idle-timeout devices from silently dropping a quiet shell.
 const KEEPALIVE: Duration = Duration::from_secs(30);
@@ -38,6 +41,9 @@ pub enum Stage {
     HostKeyAccepted { fingerprint: String },
     /// Offering one authentication method.
     Authenticating { method: String, username: String },
+    /// The security key is waiting to be touched. Nothing happens until it is, so this
+    /// has to reach the user - it is the one stage that is blocked on them, not on us.
+    TouchRequired,
     Authenticated { method: String },
     /// Requesting the pseudo-terminal and shell.
     OpeningShell { term: String },
@@ -99,13 +105,11 @@ pub async fn open(
 
     let method = auth_method_name(&target.auth);
     progress(Stage::Authenticating {
-        method: method.to_string(),
+        method: method.clone(),
         username: target.username.clone(),
     });
-    authenticate(&mut handle, target).await?;
-    progress(Stage::Authenticated {
-        method: method.to_string(),
-    });
+    authenticate(&mut handle, target, progress).await?;
+    progress(Stage::Authenticated { method });
 
     progress(Stage::OpeningShell {
         term: pick_term(term).to_string(),
@@ -121,13 +125,34 @@ pub async fn open(
 }
 
 /// Human-readable name for the method being offered, for the progress panel.
-fn auth_method_name(auth: &AuthMaterial) -> &'static str {
+///
+/// A hardware-backed key is called out, because "public key (from disk)" would be a lie
+/// about the one case where the disk holds no key at all - and that is exactly the case a
+/// user is trying to diagnose when they read this panel.
+fn auth_method_name(auth: &AuthMaterial) -> String {
+    let token = |pem: &str| {
+        keys::private_algorithm(pem).is_ok_and(|algorithm| keys::is_hardware_backed(&algorithm))
+    };
+
     match auth {
-        AuthMaterial::Password(_) => "password",
-        AuthMaterial::Interactive(_) => "keyboard-interactive",
-        AuthMaterial::Key { .. } => "public key",
-        AuthMaterial::KeyPath { .. } => "public key (from disk)",
-        AuthMaterial::Agent { .. } => "ssh-agent",
+        AuthMaterial::Password(_) => "password".to_string(),
+        AuthMaterial::Interactive(_) => "keyboard-interactive".to_string(),
+        AuthMaterial::Key { pem, .. } => if token(pem) {
+            "public key (security key)"
+        } else {
+            "public key"
+        }
+        .to_string(),
+        AuthMaterial::KeyPath { path, .. } => {
+            let hardware = std::fs::read_to_string(path).is_ok_and(|pem| token(&pem));
+            if hardware {
+                "public key (security key)"
+            } else {
+                "public key (from disk)"
+            }
+            .to_string()
+        }
+        AuthMaterial::Agent { .. } => "ssh-agent".to_string(),
     }
 }
 
@@ -161,8 +186,14 @@ fn host_key_error(
     }
 }
 
-async fn authenticate(handle: &mut Handle<Handler>, target: &Target) -> Result<()> {
+async fn authenticate(
+    handle: &mut Handle<Handler>,
+    target: &Target,
+    progress: &impl Progress,
+) -> Result<()> {
     let user = target.username.as_str();
+
+
 
     match &target.auth {
         AuthMaterial::Password(Some(password)) => {
@@ -200,28 +231,169 @@ async fn authenticate(handle: &mut Handle<Handler>, target: &Target) -> Result<(
         }
 
         AuthMaterial::Key { pem, passphrase } => {
-            let key = keys::parse_private(pem, passphrase.as_ref().map(|p| p.as_str()))?;
-            authenticate_key(handle, user, key).await
+            authenticate_with_pem(
+                handle,
+                target,
+                pem,
+                passphrase.as_ref().map(|p| p.as_str()),
+                target.pin.as_ref(),
+                progress,
+            )
+            .await
         }
 
         AuthMaterial::KeyPath { path, passphrase } => {
             let pem = std::fs::read_to_string(path)
                 .map_err(|e| Error::Auth(format!("could not read key at {path}: {e}")))?;
-            let key = keys::parse_private(&pem, passphrase.as_ref().map(|p| p.as_str()))?;
-            authenticate_key(handle, user, key).await
+            authenticate_with_pem(
+                handle,
+                target,
+                &pem,
+                passphrase.as_ref().map(|p| p.as_str()),
+                target.pin.as_ref(),
+                progress,
+            )
+            .await
         }
 
-        AuthMaterial::Agent { public_openssh } => {
-            authenticate_agent(handle, user, public_openssh.as_deref()).await
-        }
+        AuthMaterial::Agent {
+            public_openssh,
+            socket,
+        } => authenticate_agent(handle, user, public_openssh.as_deref(), socket.as_deref()).await,
     }
+}
+
+/// Authenticate with a stored key, sending it to the token's handler when it has one.
+///
+/// The algorithm is read before any decryption, because a FIDO key needs no passphrase
+/// from us - whatever protects it is on the token - and asking for one would be a prompt
+/// with no answer.
+async fn authenticate_with_pem(
+    handle: &mut Handle<Handler>,
+    target: &Target,
+    pem: &str,
+    passphrase: Option<&str>,
+    pin: Option<&Zeroizing<String>>,
+    progress: &impl Progress,
+) -> Result<()> {
+    let algorithm = keys::private_algorithm(pem)?;
+
+    if keys::is_hardware_backed(&algorithm) {
+        return authenticate_token_key(handle, target, pem, pin, progress).await;
+    }
+
+    let key = keys::parse_private(pem, passphrase)?;
+    authenticate_key(handle, target, key).await
+}
+
+/// Authenticate a FIDO key by asking the token itself to sign.
+///
+/// No agent, no `ssh-add`, no `ssh-sk-helper`: russh hands the bytes to sign to a
+/// [`fido::TokenSigner`] exactly as it would to the agent client, and the token answers.
+/// That is what makes this work identically on macOS, Linux and Windows.
+async fn authenticate_token_key(
+    handle: &mut Handle<Handler>,
+    target: &Target,
+    pem: &str,
+    pin: Option<&Zeroizing<String>>,
+    progress: &impl Progress,
+) -> Result<()> {
+    let user = target.username.as_str();
+    // No passphrase: whatever protects a FIDO key lives on the token, not in the file.
+    let key = keys::parse_private(pem, None)?;
+    let security_key = fido::SecurityKey::from_private(&key)?;
+
+    if security_key.needs_touch() {
+        progress(Stage::TouchRequired);
+    }
+
+    let mut signer = fido::TokenSigner::new(security_key, pin.cloned());
+    let public = key.public_key().clone();
+
+    log::debug!("security key: offering {} to the server", key.algorithm());
+
+    let result = handle
+        .authenticate_publickey_with(user, public, None, &mut signer)
+        .await;
+
+    // russh's signer error says nothing; the signer kept the real one.
+    if let Some(failure) = signer.take_failure() {
+        log::warn!("security key: signing failed: {failure}");
+        return Err(failure);
+    }
+
+    match &result {
+        Ok(outcome) => log::debug!("security key: server said success={}", outcome.success()),
+        Err(e) => log::warn!("security key: authentication errored: {e}"),
+    }
+
+    if result
+        .map_err(|e| Error::Auth(format!("security key authentication failed: {e}")))?
+        .success()
+    {
+        Ok(())
+    } else {
+        after_key_rejected(handle, target, "this security key").await
+    }
+}
+
+/// What to do when the server turns a key down.
+///
+/// OpenSSH moves on to the next method the server will still accept, and a user whose key
+/// is simply not in `authorized_keys` on this host expects the same - otherwise a host
+/// that would happily take a password just fails. When a password has already been typed
+/// it is tried; when not, the caller is asked for one.
+///
+/// If the server offers nothing but public keys, say so rather than prompting for a
+/// password it would refuse anyway.
+async fn after_key_rejected(
+    handle: &mut Handle<Handler>,
+    target: &Target,
+    what: &str,
+) -> Result<()> {
+    let methods = match handle.authenticate_none(target.username.as_str()).await {
+        Ok(AuthResult::Failure {
+            remaining_methods, ..
+        }) => remaining_methods,
+        // Already in, somehow: the server accepted `none`.
+        Ok(AuthResult::Success) => return Ok(()),
+        Err(_) => russh::MethodSet::empty(),
+    };
+
+    let offers_password = methods.contains(&russh::MethodKind::Password)
+        || methods.contains(&russh::MethodKind::KeyboardInteractive);
+
+    if !offers_password {
+        return Err(Error::Auth(format!(
+            "the server rejected {what} and accepts no other method - add the key to \
+             authorized_keys on that host"
+        )));
+    }
+
+    let user = target.username.as_str();
+
+    if let Some(password) = &target.typed_password {
+        if handle.authenticate_password(user, password.as_str()).await?.success() {
+            return Ok(());
+        }
+        if keyboard_interactive(handle, user, Some(password)).await? {
+            return Ok(());
+        }
+        return Err(Error::Auth("the server rejected that password".into()));
+    }
+
+    Err(Error::PasswordRequired {
+        username: user.to_string(),
+        host: format!("{}:{}", target.hostname, target.port),
+    })
 }
 
 async fn authenticate_key(
     handle: &mut Handle<Handler>,
-    user: &str,
+    target: &Target,
     key: russh::keys::PrivateKey,
 ) -> Result<()> {
+    let user = target.username.as_str();
     // RSA keys must be signed with a hash the server actually accepts; SHA-1 is refused
     // by anything modern.
     let hash_alg = handle.best_supported_rsa_hash().await?.flatten();
@@ -232,7 +404,7 @@ async fn authenticate_key(
     if result.success() {
         Ok(())
     } else {
-        Err(Error::Auth("the server rejected this key".into()))
+        after_key_rejected(handle, target, "this key").await
     }
 }
 
@@ -240,8 +412,9 @@ async fn authenticate_agent(
     handle: &mut Handle<Handler>,
     user: &str,
     public_openssh: Option<&str>,
+    socket: Option<&str>,
 ) -> Result<()> {
-    let mut client = agent::connect().await?;
+    let mut client = agent::connect(socket).await?;
     let identities = client
         .request_identities()
         .await
@@ -273,10 +446,26 @@ async fn authenticate_agent(
             }
         }
 
+        let hardware = keys::is_hardware_backed(&key.algorithm());
+
         let result = handle
             .authenticate_publickey_with(user, key.clone(), hash_alg, &mut client)
             .await
-            .map_err(|e| Error::Auth(format!("agent authentication failed: {e}")))?;
+            .map_err(|e| {
+                if hardware {
+                    // The agent took the key and cannot sign with it. On macOS this is
+                    // near-certain: every GUI app is handed launchd's agent, and Apple's
+                    // OpenSSH ships no `ssh-sk-helper`, so it accepts a FIDO key and then
+                    // fails every signature. Naming the cause saves a long hunt.
+                    Error::Auth(format!(
+                        "the ssh-agent holds this hardware key but cannot sign with it \
+                         ({e}). Its OpenSSH build has no ssh-sk-helper - Apple's does not. \
+                         Point Settings > ssh-agent socket at an agent that does."
+                    ))
+                } else {
+                    Error::Auth(format!("agent authentication failed: {e}"))
+                }
+            })?;
 
         if result.success() {
             return Ok(());

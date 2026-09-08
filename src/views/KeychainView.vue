@@ -191,6 +191,14 @@ onMounted(loadExternal)
                   {{ key.algorithm }}
                   <Badge v-if="key.encrypted" variant="secondary">Encrypted</Badge>
                   <Badge v-if="!key.privateKeyPresent" variant="secondary">Public only</Badge>
+                  <!--
+                    A FIDO key looks like an ordinary key file, and importing it would give
+                    a key nothing here can sign with. Saying so before the attempt is the
+                    only warning a user gets.
+                  -->
+                  <Badge v-if="key.hardwareBacked" variant="secondary" title="The private half is on a hardware token. Remotier uses it through your ssh-agent.">
+                    Hardware token
+                  </Badge>
                 </TableCell>
                 <TableCell class="font-mono text-xs break-all">{{ key.fingerprint }}</TableCell>
                 <TableCell>
@@ -239,6 +247,7 @@ onMounted(loadExternal)
         </ScrollArea>
       </TabsContent>
     </Tabs>
+
 
     <KeyDialogs
       v-model:generate-open="generateOpen"

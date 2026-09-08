@@ -38,11 +38,20 @@ pub enum AuthMaterial {
     Agent {
         /// Restrict to this public key when the identity names one.
         public_openssh: Option<String>,
+        /// Agent to talk to, overriding `SSH_AUTH_SOCK`. See `AGENT_SOCKET_SETTING`.
+        socket: Option<String>,
     },
     Interactive(Option<Zeroizing<String>>),
 }
 
 pub struct Target {
+    /// The ssh-agent to use, when one is configured.
+    pub agent_socket: Option<String>,
+    /// A security key's PIN, supplied only after the token asked for one. Never stored.
+    pub pin: Option<Zeroizing<String>>,
+    /// A password the user typed at a prompt. Kept even when the host authenticates with a
+    /// key, so a rejected key can fall back to it the way OpenSSH does.
+    pub typed_password: Option<Zeroizing<String>>,
     pub host_id: String,
     pub label: String,
     pub hostname: String,
@@ -306,11 +315,49 @@ pub fn preview(db: &Db, host_id: &str) -> Result<TargetPreview> {
 ///
 /// [`Error::UnresolvedVariables`] when a placeholder has no value, so the UI can collect
 /// them before a connection is attempted rather than after it fails to authenticate.
+/// Settings key naming the ssh-agent to talk to. Empty means `SSH_AUTH_SOCK`.
+pub const AGENT_SOCKET_SETTING: &str = "ssh.agentSocket";
+
+/// The configured agent socket, or `None` to use the environment's.
+pub fn agent_socket(db: &Db) -> Result<Option<String>> {
+    let rows: Vec<String> = db.read(|conn| {
+        query_all(
+            conn,
+            "SELECT value FROM settings WHERE key = ?1",
+            [AGENT_SOCKET_SETTING],
+            |row| row.get(0).map_err(Into::into),
+        )
+    })?;
+
+    Ok(rows
+        .into_iter()
+        .next()
+        .filter(|path| !path.trim().is_empty()))
+}
+
+/// Point an agent method at the configured socket.
+///
+/// Done in one place rather than at each constructor: which agent to talk to is a property
+/// of this machine, not of the identity that chose agent authentication.
+fn with_agent_socket(auth: AuthMaterial, db: &Db) -> Result<AuthMaterial> {
+    match auth {
+        AuthMaterial::Agent {
+            public_openssh,
+            socket: None,
+        } => Ok(AuthMaterial::Agent {
+            public_openssh,
+            socket: agent_socket(db)?,
+        }),
+        other => Ok(other),
+    }
+}
+
 pub fn target(
     db: &Db,
     vault: &Vault,
     host_id: &str,
     supplied_password: Option<&str>,
+    supplied_pin: Option<&str>,
 ) -> Result<Target> {
     let resolution = resolve_common(db, host_id)?;
 
@@ -321,7 +368,11 @@ pub fn target(
     // Credentials set directly on the host win outright.
     if let Some(auth_kind) = resolution.host.auth_kind {
         let auth = host_auth_material(db, vault, &resolution.host, auth_kind, supplied_password)?;
+        let auth = with_agent_socket(auth, db)?;
         return Ok(Target {
+            agent_socket: agent_socket(db)?,
+            pin: supplied_pin.map(|p| Zeroizing::new(p.to_string())),
+            typed_password: supplied_password.map(|p| Zeroizing::new(p.to_string())),
             host_id: resolution.host.id,
             label: resolution.host.label,
             hostname: resolution.hostname,
@@ -333,7 +384,7 @@ pub fn target(
 
     let auth = match &resolution.identity {
         // No identity configured: the agent is the only thing we can try.
-        None => AuthMaterial::Agent { public_openssh: None },
+        None => AuthMaterial::Agent { public_openssh: None, socket: None },
         Some(identity) => {
             let password = match &identity.password_ref {
                 Some(reference) => Some(db.read(|conn| secrets::get(conn, vault, reference))?),
@@ -350,6 +401,7 @@ pub fn target(
                     password.or_else(|| supplied_password.map(|p| Zeroizing::new(p.to_string()))),
                 ),
                 AuthKind::Agent => AuthMaterial::Agent {
+                    socket: None,
                     public_openssh: key_public(db, identity.key_id.as_deref())?,
                 },
                 AuthKind::Key => key_material(db, vault, identity.key_id.as_deref())?,
@@ -357,7 +409,12 @@ pub fn target(
         }
     };
 
+    let auth = with_agent_socket(auth, db)?;
+
     Ok(Target {
+        agent_socket: agent_socket(db)?,
+        pin: supplied_pin.map(|p| Zeroizing::new(p.to_string())),
+        typed_password: supplied_password.map(|p| Zeroizing::new(p.to_string())),
         host_id: resolution.host.id,
         label: resolution.host.label,
         hostname: resolution.hostname,
@@ -389,6 +446,7 @@ fn host_auth_material(
             password.or_else(|| supplied_password.map(|p| Zeroizing::new(p.to_string()))),
         )),
         AuthKind::Agent => Ok(AuthMaterial::Agent {
+            socket: None,
             public_openssh: key_public(db, host.key_id.as_deref())?,
         }),
         AuthKind::Key => key_material(db, vault, host.key_id.as_deref()),
@@ -465,6 +523,7 @@ fn key_material(db: &Db, vault: &Vault, key_id: Option<&str>) -> Result<AuthMate
             passphrase,
         }),
         KeySource::Agent => Ok(AuthMaterial::Agent {
+            socket: None,
             public_openssh: key_public(db, Some(key_id))?,
         }),
     }

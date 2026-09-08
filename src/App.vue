@@ -18,6 +18,7 @@ onMounted(bootstrap)
         <RouterView />
       </main>
     </SidebarInset>
-    <Toaster />
+    <!-- Dark only, so sonner is told outright rather than left to guess from the OS. -->
+    <Toaster theme="dark" />
   </SidebarProvider>
 </template>

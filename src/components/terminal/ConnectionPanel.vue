@@ -44,6 +44,20 @@ const description = computed(() => {
 /** Nothing to do but wait while a connection is being made or verified. */
 const busy = computed(() => props.status === 'connecting' || props.status === 'checking')
 
+/**
+ * True for an action line that is still the last thing to have happened.
+ *
+ * Anything after it means the user already did the thing, so the spinner stops even though
+ * the line stays in the log.
+ */
+function waitingAt(index: number): boolean {
+  return (
+    props.entries[index]?.level === 'action'
+    && index === props.entries.length - 1
+    && props.status !== 'error'
+  )
+}
+
 const action = computed(() => {
   if (props.status === 'lost') return 'Reconnect'
   if (props.status === 'error') return 'Try again'
@@ -85,7 +99,13 @@ const action = computed(() => {
         </EmptyContent>
       </Empty>
 
-      <ScrollArea v-if="props.entries.length" class="max-h-48 w-full rounded-md border bg-muted/40">
+        <!--
+        A definite height, not `max-h-*`: the viewport inside is `size-full`, so without one
+        it has nothing to resolve against, never clips, and the log spills past the border
+        instead of scrolling. A fixed box also stops the panel resizing on every progress
+        line while a connection is being made.
+      -->
+    <ScrollArea v-if="props.entries.length" class="h-48 w-full rounded-md border bg-muted/40">
         <ul class="flex flex-col gap-1 p-3 text-left">
           <li
             v-for="(entry, index) in props.entries"
@@ -93,7 +113,19 @@ const action = computed(() => {
             class="flex gap-2 font-mono text-xs"
           >
             <span class="shrink-0 text-muted-foreground">{{ formatTime(entry.at) }}</span>
-            <span :class="cn('break-all', entry.level === 'error' && 'text-destructive')">
+            <!--
+              The spinner marks a step that is still waiting on the user. It is dropped
+              once another line follows, because by then the wait is over and a spinner on
+              a finished step is a lie.
+            -->
+            <Spinner v-if="waitingAt(index)" class="mt-0.5 size-3 shrink-0 text-primary" />
+            <span
+              :class="cn(
+                'break-all',
+                entry.level === 'error' && 'text-destructive',
+                entry.level === 'action' && 'text-primary',
+              )"
+            >
               {{ entry.message }}
             </span>
           </li>

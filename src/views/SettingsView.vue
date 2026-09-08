@@ -125,6 +125,23 @@ onMounted(async () => {
                 Used when neither the host nor any of its groups sets one.
               </FieldDescription>
             </Field>
+
+            <Field>
+              <FieldLabel for="agent-socket">ssh-agent socket</FieldLabel>
+              <Input
+                id="agent-socket"
+                :model-value="settings.get('ssh.agentSocket')"
+                placeholder="$SSH_AUTH_SOCK"
+                class="font-mono text-xs"
+                @update:model-value="value => update('ssh.agentSocket', String(value))"
+              />
+              <FieldDescription>
+                Blank uses whichever agent the environment points at. Set this to reach a
+                different one — on macOS every app is handed launchd's agent, and Apple's
+                build ships no <code class="font-mono">ssh-sk-helper</code>, so it cannot
+                sign for a hardware key however the key got in.
+              </FieldDescription>
+            </Field>
           </FieldGroup>
         </CardContent>
       </Card>

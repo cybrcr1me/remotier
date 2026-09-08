@@ -31,6 +31,9 @@ pub struct ConnectRequest {
     /// Supplied when the user answered a password prompt. Used for this connection only
     /// and never written to the database.
     pub password: Option<String>,
+    /// Supplied when the user answered a security key's PIN prompt. Used for this
+    /// connection only and never written to the database.
+    pub pin: Option<String>,
     /// Correlates progress events with the pane that asked for the connection. The
     /// session id does not exist yet while connecting, so the caller supplies this.
     pub attempt_id: String,
@@ -71,6 +74,7 @@ pub async fn ssh_connect(
         state.vault()?,
         &request.host_id,
         request.password.as_deref(),
+        request.pin.as_deref(),
     )?;
     let term = request.term.unwrap_or_else(|| DEFAULT_TERM.to_string());
 
@@ -155,8 +159,9 @@ pub fn ssh_sessions(state: State<'_, AppState>) -> Result<Vec<String>> {
 
 /// Public keys currently held by the ssh-agent.
 #[tauri::command]
-pub async fn list_agent_keys() -> Result<Vec<crate::ssh::agent::AgentKey>> {
-    crate::ssh::agent::identities().await
+pub async fn list_agent_keys(state: State<'_, AppState>) -> Result<Vec<crate::ssh::agent::AgentKey>> {
+    let socket = crate::ssh::resolve::agent_socket(&state.db)?;
+    crate::ssh::agent::identities(socket.as_deref()).await
 }
 
 /// Key pairs found in `~/.ssh`, for the "use a key I already have" flow.

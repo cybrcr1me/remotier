@@ -175,3 +175,13 @@ describe('hosts breadcrumb', () => {
     expect(view).toMatch(/goUpTo\(-1\)/)
   })
 })
+
+describe('toasts', () => {
+  it('imports the stylesheet vue-sonner needs to render at all', () => {
+    // Without it a toast has no surface, no position and no stacking: it lands as bare
+    // text in the document flow. `Sonner.vue` only supplies colour variables, so nothing
+    // about the component's presence hints that the stylesheet is missing.
+    const css = readFileSync(join(SRC, 'assets/index.css'), 'utf8')
+    expect(css).toMatch(/@import "vue-sonner\/style\.css"/)
+  })
+})

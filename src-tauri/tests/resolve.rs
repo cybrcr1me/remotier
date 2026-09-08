@@ -226,7 +226,7 @@ fn connecting_is_refused_while_a_variable_is_unresolved() {
     let host = f.host("{{env}}.example.com", None, None, None);
     f.declare_var("host", &host, "env", None, true);
 
-    match resolve::target(&f.db, &f.vault, &host, None) {
+    match resolve::target(&f.db, &f.vault, &host, None, None) {
         Err(Error::UnresolvedVariables(names)) => assert_eq!(names, vec!["env"]),
         other => panic!("expected UnresolvedVariables, got {other:?}", other = other.map(|_| "a target")),
     }
@@ -238,7 +238,7 @@ fn the_stored_password_is_decrypted_for_the_connection() {
     let identity = f.identity("deploy", Some("hunter2"));
     let host = f.host("example.com", None, None, Some(&identity));
 
-    let target = resolve::target(&f.db, &f.vault, &host, None).unwrap();
+    let target = resolve::target(&f.db, &f.vault, &host, None, None).unwrap();
 
     assert_eq!(target.username, "deploy");
     match target.auth {
@@ -252,7 +252,7 @@ fn a_host_with_no_identity_falls_back_to_the_agent() {
     let f = Fixture::new("no-identity");
     let host = f.host("example.com", None, None, None);
 
-    let target = resolve::target(&f.db, &f.vault, &host, None).unwrap();
+    let target = resolve::target(&f.db, &f.vault, &host, None, None).unwrap();
 
     assert!(matches!(target.auth, AuthMaterial::Agent { .. }));
 }
@@ -313,7 +313,7 @@ fn a_host_can_carry_its_own_username_and_password() {
     let f = Fixture::new("host-creds");
     let host = f.host_with_credentials("example.com", "root", "password", Some("hunter2"));
 
-    let target = resolve::target(&f.db, &f.vault, &host, None).unwrap();
+    let target = resolve::target(&f.db, &f.vault, &host, None, None).unwrap();
 
     assert_eq!(target.username, "root");
     match target.auth {
@@ -338,7 +338,7 @@ fn host_credentials_beat_an_inherited_identity() {
     })
     .unwrap();
 
-    let target = resolve::target(&f.db, &f.vault, &host, None).unwrap();
+    let target = resolve::target(&f.db, &f.vault, &host, None, None).unwrap();
 
     // The host is explicit; the inherited identity must not override it.
     assert_eq!(target.username, "from-host");
@@ -363,7 +363,7 @@ fn a_host_username_without_its_own_auth_still_overrides_the_identity_username() 
     })
     .unwrap();
 
-    let target = resolve::target(&f.db, &f.vault, &host, None).unwrap();
+    let target = resolve::target(&f.db, &f.vault, &host, None, None).unwrap();
 
     assert_eq!(target.username, "override");
     // Authentication still comes from the identity, only the username was overridden.
@@ -375,7 +375,7 @@ fn a_host_set_to_agent_auth_needs_no_identity() {
     let f = Fixture::new("host-agent");
     let host = f.host_with_credentials("example.com", "deploy", "agent", None);
 
-    let target = resolve::target(&f.db, &f.vault, &host, None).unwrap();
+    let target = resolve::target(&f.db, &f.vault, &host, None, None).unwrap();
 
     assert_eq!(target.username, "deploy");
     assert!(matches!(target.auth, AuthMaterial::Agent { .. }));
@@ -421,7 +421,7 @@ fn a_host_with_no_stored_password_still_resolves() {
 
     // Resolution must not refuse here: the connection is attempted first, and only a
     // refusal from the server prompts the user.
-    let target = resolve::target(&f.db, &f.vault, &host, None).unwrap();
+    let target = resolve::target(&f.db, &f.vault, &host, None, None).unwrap();
 
     assert_eq!(target.username, "root");
     assert!(matches!(target.auth, AuthMaterial::Password(None)));
@@ -432,7 +432,7 @@ fn a_supplied_password_satisfies_a_host_that_stores_none() {
     let f = Fixture::new("supplied-host");
     let host = f.host_with_credentials("example.com", "root", "password", None);
 
-    let target = resolve::target(&f.db, &f.vault, &host, Some("typed-in")).unwrap();
+    let target = resolve::target(&f.db, &f.vault, &host, Some("typed-in"), None).unwrap();
 
     match target.auth {
         AuthMaterial::Password(Some(password)) => assert_eq!(*password, "typed-in"),
@@ -455,7 +455,7 @@ fn an_identity_with_no_stored_password_still_resolves() {
     .unwrap();
     let host = f.host("example.com", None, None, Some(&identity));
 
-    let target = resolve::target(&f.db, &f.vault, &host, None).unwrap();
+    let target = resolve::target(&f.db, &f.vault, &host, None, None).unwrap();
 
     assert_eq!(target.username, "deploy");
     assert!(matches!(target.auth, AuthMaterial::Password(None)));
@@ -475,7 +475,7 @@ fn a_supplied_password_satisfies_an_identity_that_stores_none() {
     .unwrap();
     let host = f.host("example.com", None, None, Some(&identity));
 
-    let target = resolve::target(&f.db, &f.vault, &host, Some("typed-in")).unwrap();
+    let target = resolve::target(&f.db, &f.vault, &host, Some("typed-in"), None).unwrap();
 
     match target.auth {
         AuthMaterial::Password(Some(password)) => assert_eq!(*password, "typed-in"),
@@ -488,7 +488,7 @@ fn a_stored_password_is_preferred_over_a_supplied_one() {
     let f = Fixture::new("stored-wins");
     let host = f.host_with_credentials("example.com", "root", "password", Some("stored"));
 
-    let target = resolve::target(&f.db, &f.vault, &host, Some("typed-in")).unwrap();
+    let target = resolve::target(&f.db, &f.vault, &host, Some("typed-in"), None).unwrap();
 
     match target.auth {
         AuthMaterial::Password(Some(password)) => assert_eq!(*password, "stored"),
@@ -502,6 +502,6 @@ fn keyboard_interactive_never_demands_a_stored_password() {
     let host = f.host_with_credentials("example.com", "root", "interactive", None);
 
     // The server does the asking here, so an empty secret is a valid starting point.
-    let target = resolve::target(&f.db, &f.vault, &host, None).unwrap();
+    let target = resolve::target(&f.db, &f.vault, &host, None, None).unwrap();
     assert!(matches!(target.auth, AuthMaterial::Interactive(None)));
 }

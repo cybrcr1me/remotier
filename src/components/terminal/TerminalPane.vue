@@ -8,10 +8,12 @@ import {
 } from '@/components/ui/empty'
 import ConnectionPanel from './ConnectionPanel.vue'
 import {
+  actionEntry,
   appendEntry,
   describeStage,
   errorEntry,
   infoEntry,
+  isAction,
   type LogEntry,
 } from '@/lib/connection-log'
 import {
@@ -60,6 +62,7 @@ const emit = defineEmits<{
     prompt: PasswordPrompt,
     decide: (answer: { password: string, remember: boolean } | null) => void,
   ]
+  pin: [decide: (pin: string | null) => void]
 }>()
 
 const sessions = useSessionsStore()
@@ -163,7 +166,11 @@ async function connect() {
     unlistenProgress = await listen<ConnectProgress>('ssh://progress', ({ payload }) => {
       if (payload.attemptId !== attemptId) return
       if (payload.stage === 'connecting') entry.target.value = `${payload.host}:${payload.port}`
-      entry.log.value = appendEntry(entry.log.value, infoEntry(describeStage(payload)))
+      const line = describeStage(payload)
+      entry.log.value = appendEntry(
+        entry.log.value,
+        isAction(payload) ? actionEntry(line) : infoEntry(line),
+      )
     })
   } catch (e) {
     // Losing progress reporting is not a reason to refuse to connect.
@@ -187,6 +194,7 @@ async function connect() {
         new Promise(resolve => emit('hostKey', prompt, resolve)),
       askAboutVariables: names =>
         new Promise(resolve => emit('variables', names, resolve)),
+      askForPin: () => new Promise(resolve => emit('pin', resolve)),
       askForPassword: async (prompt) => {
         const answer = await new Promise<{ password: string, remember: boolean } | null>(
           resolve => emit('password', prompt, resolve),

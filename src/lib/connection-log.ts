@@ -9,7 +9,8 @@ import type { ConnectStage } from '@/lib/types'
 
 export interface LogEntry {
   at: number
-  level: 'info' | 'error'
+  /** `action` is waiting on the user, not on us, and is called out as such. */
+  level: 'info' | 'action' | 'error'
   message: string
 }
 
@@ -22,6 +23,8 @@ export function describeStage(stage: ConnectStage): string {
       return `Host key verified (${stage.fingerprint})`
     case 'authenticating':
       return `Authenticating as ${stage.username} using ${stage.method}`
+    case 'touchRequired':
+      return 'Touch your security key'
     case 'authenticated':
       return `Authenticated using ${stage.method}`
     case 'openingShell':
@@ -47,6 +50,16 @@ export function infoEntry(message: string, at = Date.now()): LogEntry {
 
 export function errorEntry(message: string, at = Date.now()): LogEntry {
   return { at, level: 'error', message }
+}
+
+/** Something the user has to do before anything else can happen. */
+export function actionEntry(message: string, at = Date.now()): LogEntry {
+  return { at, level: 'action', message }
+}
+
+/** Stages that are waiting on the user rather than on the connection. */
+export function isAction(stage: ConnectStage): boolean {
+  return stage.stage === 'touchRequired'
 }
 
 /** `14:03:22`, which is enough to correlate with a server log. */

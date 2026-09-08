@@ -50,6 +50,6 @@ const route = useRoute()
       </SidebarGroup>
     </SidebarContent>
 
-    <SidebarRail />
+    <SidebarRail class="" />
   </Sidebar>
 </template>
