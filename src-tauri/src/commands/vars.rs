@@ -111,7 +111,7 @@ pub fn list_var_values(state: State<'_, AppState>) -> Result<Vec<VarValue>> {
             |row| {
                 let scope: String = row.get(0)?;
                 Ok(VarValue {
-                    scope: if scope == "group" { VarScope::Group } else { VarScope::Host },
+                    scope: VarScope::from_db(&scope),
                     scope_id: row.get(1)?,
                     name: row.get(2)?,
                     value: row.get(3)?,

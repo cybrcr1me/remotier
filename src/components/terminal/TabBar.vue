@@ -110,7 +110,9 @@ function onDrop(event: DragEvent) {
         :key="tab.id"
         draggable="true"
         :class="cn(
-          'group relative flex min-w-32 max-w-52 shrink-0 cursor-default items-center gap-1.5 rounded-md border px-3 text-sm',
+          // The close button's 16px icon sits in a 20px box, so an even `px-3` leaves it
+          // looking further from the edge than the title is from the other side.
+          'group relative flex min-w-32 max-w-52 shrink-0 cursor-default items-center gap-1.5 rounded-md border pl-3 pr-1.5 text-sm',
           tab.id === activeTabId
             ? 'bg-accent text-accent-foreground'
             : 'text-muted-foreground hover:bg-accent/50',

@@ -8,15 +8,41 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarFooter,
   SidebarRail,
 } from '@/components/ui/sidebar'
 import BrandMark from '@/components/layout/BrandMark.vue'
 import { navEntries } from '@/lib/nav'
 import { BAR_HEIGHT } from '@/lib/ui'
 import { cn } from '@/lib/utils'
+import { instanceLabel, summarise } from '@/lib/sync-status'
+import { useSyncStore } from '@/stores/sync'
+import { computed } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 
 const route = useRoute()
+const sync = useSyncStore()
+
+/**
+ * The connection-state convention: a 6px square, never a pill or a badge. The colour is
+ * the whole message, so the tooltip carries the words.
+ */
+const squareClass = computed(() => {
+  switch (sync.indicator) {
+    case 'synced':
+      return 'bg-[var(--rm-ok)]'
+    case 'syncing':
+      return 'bg-[var(--rm-warn)]'
+    case 'error':
+      return 'bg-[var(--rm-error)]'
+    default:
+      return 'bg-[var(--rm-idle)]'
+  }
+})
+
+const label = computed(() =>
+  sync.status.signedIn ? instanceLabel(sync.status.instanceUrl) : 'Sync off',
+)
 </script>
 
 <template>
@@ -49,6 +75,19 @@ const route = useRoute()
         </SidebarGroupContent>
       </SidebarGroup>
     </SidebarContent>
+
+    <SidebarFooter>
+      <SidebarMenu>
+        <SidebarMenuItem>
+          <SidebarMenuButton as-child :tooltip="summarise(sync.status)" size="sm">
+            <RouterLink to="/settings">
+              <span class="size-1.5 shrink-0" :class="squareClass" />
+              <span class="truncate font-mono text-xs">{{ label }}</span>
+            </RouterLink>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      </SidebarMenu>
+    </SidebarFooter>
 
     <SidebarRail class="" />
   </Sidebar>

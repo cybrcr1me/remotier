@@ -37,6 +37,15 @@ pub enum Error {
     NoSession(String),
     #[error("a password is required for {username}@{host}")]
     PasswordRequired { username: String, host: String },
+
+    #[error("sync: {0}")]
+    Sync(String),
+    /// The server refused the session. The UI signs out rather than retrying, because
+    /// nothing this device can do on its own will make the token valid again.
+    #[error("your sync session has expired - sign in again")]
+    SyncUnauthorised,
+    #[error("internal error: {0}")]
+    Internal(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -65,6 +74,27 @@ impl From<serde_json::Error> for Error {
     }
 }
 
+impl From<remotier_sync_proto::crypto::Error> for Error {
+    fn from(e: remotier_sync_proto::crypto::Error) -> Self {
+        Error::Sync(e.to_string())
+    }
+}
+
+impl From<reqwest::Error> for Error {
+    fn from(e: reqwest::Error) -> Self {
+        // Whatever the transport says, phrased as something a user can act on. The
+        // detail still reaches the log.
+        log::debug!("sync transport error: {e}");
+        if e.is_timeout() {
+            Error::Sync("the sync server did not answer in time".into())
+        } else if e.is_connect() {
+            Error::Sync("could not reach the sync server".into())
+        } else {
+            Error::Sync(e.to_string())
+        }
+    }
+}
+
 impl Error {
     /// Stable discriminant for the frontend to branch on, so it never has to match on
     /// message text.
@@ -84,6 +114,9 @@ impl Error {
             Error::ChangedHostKey { .. } => "changedHostKey",
             Error::NoSession(_) => "noSession",
             Error::PasswordRequired { .. } => "passwordRequired",
+            Error::Sync(_) => "sync",
+            Error::SyncUnauthorised => "syncUnauthorised",
+            Error::Internal(_) => "internal",
         }
     }
 }

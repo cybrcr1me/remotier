@@ -7,14 +7,16 @@ use crate::crypto::vault::Vault;
 use crate::db::Db;
 use crate::error::{Error, Result};
 use crate::ssh::session::Sessions;
+use crate::sync::engine::SyncEngine;
 
 pub struct AppState {
-    pub db: Db,
+    pub db: Arc<Db>,
     /// `None` when the key store could not be opened. The app still runs: hosts, groups
     /// and settings work, only operations that touch secrets are refused.
-    vault: Option<Vault>,
+    vault: Option<Arc<Vault>>,
     vault_error: Option<String>,
     sessions: Arc<Sessions>,
+    sync: Arc<SyncEngine>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -40,10 +42,10 @@ impl AppState {
             ("remotier.db", Vault::open_keychain())
         };
 
-        let db = Db::open(&data_dir.join(db_name))?;
+        let db = Arc::new(Db::open(&data_dir.join(db_name))?);
 
         let (vault, vault_error) = match vault {
-            Ok(vault) => (Some(vault), None),
+            Ok(vault) => (Some(Arc::new(vault)), None),
             Err(e) => {
                 log::error!("key store unavailable, secrets are disabled: {e}");
                 (None, Some(e.to_string()))
@@ -57,11 +59,14 @@ impl AppState {
             );
         }
 
+        let sync = Arc::new(SyncEngine::new(Arc::clone(&db), vault.clone()));
+
         Ok(Self {
             db,
             vault,
             vault_error,
             sessions: Arc::new(Sessions::new()),
+            sync,
         })
     }
 
@@ -69,9 +74,13 @@ impl AppState {
         Arc::clone(&self.sessions)
     }
 
+    pub fn sync(&self) -> Arc<SyncEngine> {
+        Arc::clone(&self.sync)
+    }
+
     /// Access the vault, or explain why secrets are unavailable.
     pub fn vault(&self) -> Result<&Vault> {
-        self.vault.as_ref().ok_or_else(|| {
+        self.vault.as_deref().ok_or_else(|| {
             Error::Vault(
                 self.vault_error
                     .clone()

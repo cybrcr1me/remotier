@@ -2,7 +2,8 @@
 
 export type AuthKind = 'password' | 'key' | 'agent' | 'interactive'
 export type KeySource = 'managed' | 'system_path' | 'agent'
-export type VarScope = 'group' | 'host'
+/** `global` is the whole account and has an empty `scopeId`; there is only one. */
+export type VarScope = 'global' | 'group' | 'host'
 
 export interface Group {
   id: string
@@ -253,6 +254,57 @@ export interface Workspace {
   layoutJson: string
   createdAt: number
   updatedAt: number
+}
+
+/** What the sync engine is doing, as the settings panel and sidebar show it. */
+export interface SyncStatus {
+  signedIn: boolean
+  instanceUrl: string | null
+  email: string | null
+  /** This machine's id. Breaks last-write-wins ties and names its stored layout. */
+  deviceId: string
+  lastSyncAt: number | null
+  /** Records waiting to be pushed. */
+  pending: number
+  syncing: boolean
+  /**
+   * Local rows written or deleted by the last cycle. The engine writes SQLite directly,
+   * so the stores hold a stale copy until they reload; this is what tells them to.
+   */
+  applied: number
+  /**
+   * The last failure, cleared by the next success. Sync failing is a condition that
+   * usually fixes itself, not an error the user has to dismiss.
+   */
+  error: string | null
+}
+
+/** Another machine with a saved tab layout. */
+export interface DeviceLayout {
+  deviceId: string
+  name: string
+  updatedAt: number
+}
+
+/** One person a group is shared with, or one share you are a member of. */
+export interface Share {
+  groupId: string
+  /** Whose group it is. Only the owner can share it further or revoke. */
+  ownerId: string
+  userId: string
+  /** The other party: the member when you own the group, the owner when you do not. */
+  email: string
+  wrappedGroupKey: string
+  createdAt: number
+}
+
+/** What `GET /v1/instance` answers. Probed before anything is sent to an address. */
+export interface InstanceInfo {
+  name: string
+  version: string
+  /** Envelope formats the instance accepts. A build not listed says so up front. */
+  formatVersions: number[]
+  registrationOpen: boolean
 }
 
 /** A step reported while a connection is being established. */

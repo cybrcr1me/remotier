@@ -21,9 +21,13 @@ pub fn get_settings(state: State<'_, AppState>) -> Result<HashMap<String, String
 pub fn set_setting(state: State<'_, AppState>, key: String, value: String) -> Result<()> {
     state.db.write(|tx| {
         tx.execute(
-            "INSERT INTO settings (key, value) VALUES (?1, ?2)
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            params![key, value],
+            // `updated_at` is the LWW clock a settings row is merged on. A write that
+            // does not stamp it leaves the row at 0 forever, so it would lose to every
+            // other device no matter how recently it was changed here.
+            "INSERT INTO settings (key, value, updated_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value,
+                                            updated_at = excluded.updated_at",
+            params![key, value, crate::db::now_ms()],
         )?;
         Ok(())
     })

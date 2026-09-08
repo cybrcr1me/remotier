@@ -29,7 +29,12 @@ impl Db {
         })
     }
 
-    #[cfg(test)]
+    /// A configured, migrated database in memory.
+    ///
+    /// Public rather than `#[cfg(test)]` because the integration tests in `tests/` are a
+    /// separate crate and cannot see a test-only item. It goes through `configure` and
+    /// `apply` like any other database, so a test is never running against a schema or a
+    /// set of pragmas the app does not use.
     pub fn open_in_memory() -> Result<Self> {
         let mut conn = Connection::open_in_memory()?;
         Self::configure(&conn)?;
@@ -43,6 +48,10 @@ impl Db {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.pragma_update(None, "foreign_keys", true)?;
+        // Without this, a delete performed by an ON DELETE CASCADE fires no delete
+        // trigger, so deleting a group would wipe its whole subtree with no sync
+        // tombstone for any of it - the rows would simply come back from the next pull.
+        conn.pragma_update(None, "recursive_triggers", true)?;
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
         Ok(())
     }

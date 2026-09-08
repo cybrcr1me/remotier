@@ -1,0 +1,14 @@
+[net]
+# Fetch git dependencies by shelling out to the git CLI instead of using libgit2.
+#
+# Not strictly needed while `remotier-sync` is public - libgit2 fetches an anonymous
+# HTTPS repo perfectly well. It is here because the moment that repository is made
+# private again, libgit2 fails with an authentication error that names neither the
+# repository nor the credential it wanted, while the git CLI picks up the SSH agent, the
+# macOS keychain helper and everything else already configured.
+#
+# This file lives at the repository root rather than under `src-tauri/`, because cargo
+# only reads `.cargo/config.toml` from the working directory and its ancestors - and CI
+# runs `cargo --manifest-path src-tauri/Cargo.toml` from the root, where a config nested
+# inside `src-tauri` is silently ignored.
+git-fetch-with-cli = true

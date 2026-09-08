@@ -5,6 +5,7 @@ import type {
   AgentKey,
   ConfigHost,
   ConnectRequest,
+  DeviceLayout,
   DiscoveredKey,
   Group,
   GroupInput,
@@ -12,8 +13,11 @@ import type {
   HostInput,
   Identity,
   IdentityInput,
+  InstanceInfo,
   KeyMetaInput,
+  Share,
   SshKey,
+  SyncStatus,
   VarDef,
   VarDefInput,
   VarScope,
@@ -96,6 +100,38 @@ export const ipc = {
 
   getSettings: () => invoke<Record<string, string>>('get_settings'),
   setSetting: (key: string, value: string) => invoke<void>('set_setting', { key, value }),
+
+  syncStatus: () => invoke<SyncStatus>('sync_status'),
+  /** Ask an address whether it is a Remotier instance, before trusting it with anything. */
+  syncProbeInstance: (url: string) => invoke<InstanceInfo>('sync_probe_instance', { url }),
+  /** Returns the recovery code. It is shown once and never stored. */
+  syncRegister: (url: string, email: string, password: string, deviceName: string) =>
+    invoke<string>('sync_register', { url, email, password, deviceName }),
+  syncLogin: (url: string, email: string, password: string, deviceName: string) =>
+    invoke<SyncStatus>('sync_login', { url, email, password, deviceName }),
+  syncRecover: (url: string, email: string, recoveryCode: string, deviceName: string) =>
+    invoke<SyncStatus>('sync_recover', { url, email, recoveryCode, deviceName }),
+  syncLogout: () => invoke<SyncStatus>('sync_logout'),
+  syncNow: () => invoke<SyncStatus>('sync_now'),
+
+  /** Machines with a saved layout, this one excluded. */
+  syncDevices: () => invoke<DeviceLayout[]>('sync_devices'),
+  /**
+   * One device's saved tabs. Fetched on request and never applied by the engine:
+   * replacing what is on screen is the user's decision, not a sync outcome.
+   */
+  syncDeviceLayout: (deviceId: string) => invoke<string>('sync_device_layout', { deviceId }),
+
+  /**
+   * Share a group and everything beneath it. The recipient gets hostnames, ports and
+   * usernames in that branch — never a password, passphrase or private key.
+   */
+  syncShareGroup: (groupId: string, email: string) =>
+    invoke<Share[]>('sync_share_group', { groupId, email }),
+  syncListShares: (groupId: string) => invoke<Share[]>('sync_list_shares', { groupId }),
+  /** Revokes and rotates the group key, so the removed member's copy stops working. */
+  syncUnshareGroup: (groupId: string, userId: string) =>
+    invoke<Share[]>('sync_unshare_group', { groupId, userId }),
 
   listVarDefs: () => invoke<VarDef[]>('list_var_defs'),
   upsertVarDef: (input: VarDefInput) => invoke<VarDef>('upsert_var_def', { input }),

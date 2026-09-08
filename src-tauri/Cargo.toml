@@ -6,7 +6,9 @@ authors = ["Flexusma"]
 license = "MIT"
 repository = ""
 edition = "2021"
-rust-version = "1.82"
+# Raised from 1.82 by remotier-sync-proto: edition 2024 is in that dependency graph and
+# parsing those manifests needs Cargo 1.85.
+rust-version = "1.85"
 
 [lib]
 name = "remotier_lib"
@@ -36,6 +38,30 @@ zeroize = { version = "1", features = ["derive"] }
 # vendors its source and builds with `cc` - no CMake, no NASM, no OpenSSL.
 ctap-hid-fido2 = "3"
 sha2 = "0.10"
+
+# The wire format and envelope crypto, shared with the sync server so there is one
+# definition of what travels between them.
+#
+# A git dependency, not crates.io: this crate is an implementation detail of two
+# applications and nothing else should depend on it, so a registry buys nothing and
+# publishing it would invite exactly that.
+#
+# Pinned by `rev` rather than `branch`. Cargo.lock would pin a branch to a commit anyway,
+# but a rev says which commit is intended rather than recording whichever one happened to
+# be at the head of `main` the day the lock was written. Move it to `tag` once the sync
+# repo starts tagging releases.
+#
+# Hosted on GitHub, not crates.io, and fetched anonymously - see `.cargo/config.toml`
+# at the repository root for why cargo is told to fetch it with the git CLI.
+remotier-sync-proto = { git = "https://github.com/cybrcr1me/remotier-sync", rev = "93e43d504a8ea7c0fd7b29c40f368b1ff8d95819" }
+
+# `rustls` on `ring`, explicitly. reqwest's plain `rustls-tls` feature pulls rustls's
+# default provider, which is aws-lc-rs - CMake and NASM on Windows, the same reason
+# russh above is pinned to ring. The provider is installed in `sync::client`.
+reqwest = { version = "0.12", default-features = false, features = [
+    "json", "http2", "charset", "rustls-tls-webpki-roots-no-provider",
+] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "net", "time", "io-util"] }
 serde = { version = "1", features = ["derive"] }

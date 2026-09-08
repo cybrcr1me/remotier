@@ -7,3 +7,4 @@ pub mod ssh;
 pub mod settings;
 pub mod vars;
 pub mod workspaces;
+pub mod sync;

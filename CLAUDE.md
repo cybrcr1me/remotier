@@ -30,7 +30,13 @@ Local-first SSH client (Termius alternative). Tauri 2 + Vue 3 + shadcn-vue.
 - Secrets are never stored plaintext: `crypto::vault` seals them with a keychain-backed DEK
   (XChaCha20-Poly1305) into the `secrets` table; rows hold a `secret_ref`.
 - Placeholder resolution (`{{var}}`) is implemented **once**, in `src-tauri/src/vars.rs`.
-  The UI previews via an invoke — do not reimplement it in TS.
+  The UI previews via an invoke — do not reimplement it in TS. Scopes are `global` (the
+  account, empty `scope_id`), `group` and `host`, layered weakest first so a nearer scope
+  overrides a wider one. Settings → Placeholders lists every declaration with this machine's
+  answer (`lib/placeholder-list.ts` pairs the two halves) and is where **account**
+  placeholders are declared; a group's are declared in the group editor, because they travel
+  with the group and are shared with whoever else has it. Migration 4 rebuilds both variable
+  tables — SQLite cannot widen a `CHECK` in place — and a test covers the data surviving it.
 - SQLite must never run on the main thread: DB commands are `#[tauri::command(async)]`.
 - `var_values` is local-only and must never be included in any future sync payload.
 
@@ -270,6 +276,187 @@ Two rules hold in both:
 
 A corrupt snapshot yields `null` and an empty workspace rather than throwing - losing the
 tab layout is acceptable, failing to start is not.
+
+## Cloud sync
+
+Optional, account-based, and off until someone signs in. The server is a separate repo
+(`remotier-sync`, axum over SQLite or Postgres); both sides compile
+`remotier-sync-proto`, so there is one definition of the wire format. An end-to-end
+format that drifts between two hand-written implementations fails as "decryption
+failed", which says nothing about which side is wrong.
+
+**Hybrid, not opaque.** Each record is a plaintext routing header - id, kind, group,
+sort, clock, tombstone - around an encrypted payload. The header is what lets the server
+route a shared group to its members without reading it. The server learns record counts,
+the group tree shape, share membership and edit timing; never a hostname, username,
+label, tag, port or placeholder. Fields in both places are authoritative **inside** the
+ciphertext; the plaintext copy is a routing hint.
+
+**No secrets sync.** Not by filtering - no payload struct in `record.rs` has anywhere to
+put a password, a passphrase or a private key, and a test fails if a field named like one
+appears. A shared group therefore hands a colleague addresses and usernames, never a
+working credential.
+
+### Keys
+
+Argon2id over password + lowercased email gives a master key, split by HKDF into an
+`authKey` sent to the server and a `wrapKey` that never leaves the device. `wrapKey`
+wraps an X25519 account secret and a 32-byte personal content key, both stored server-side
+as ciphertext so a new device bootstraps from the password alone. A **recovery code**,
+shown once, wraps the same two blobs a second time - the server holds no key and cannot
+reset a password. Because the account keys never change, a password change re-encrypts
+zero records; `a_password_change_does_not_touch_a_single_record` pins that.
+
+Locally the account keys are sealed into the `secrets` table under the existing DEK, so
+sync resumes after a restart without asking for the password again. That is deliberate:
+this database already protects SSH private keys that way, so demanding a password to sync
+but not to use a stored key would be theatre. No vault, no sync - the same degradation as
+every other secret-touching feature.
+
+### Change tracking is done by trigger
+
+Migration 5 adds `sync_meta` (dirty flag, tombstone, server sequence) and `sync_state`,
+plus triggers on the six syncable tables. Triggers rather than edits to ~20 command
+functions, for two reasons: a dirty flag that must be remembered will be forgotten, and
+only a trigger sees the rows an `ON DELETE CASCADE` removes when a group is deleted.
+
+**That cascade needs `PRAGMA recursive_triggers`**, set in `Db::configure`. Without it a
+deleted subtree produces no tombstones and the next pull resurrects the lot.
+`cascade_delete_leaves_tombstones` is the test; do not remove the pragma.
+
+`var_values` and `session_state` have no triggers, on purpose - both are local-only, and
+`local_only_data_is_never_collected` asserts on what `collect` actually produces rather
+than on the intent.
+
+### Things that look like details and are not
+
+- **The database lock is never held across a network call.** `Db` is one
+  `Mutex<Connection>` whose contract is "nothing awaits while the guard is held", so every
+  cycle is read-under-lock, release, HTTP, reacquire to write. Holding it would stall every
+  terminal command in the app for as long as the network took.
+- **Payloads carry a key *fingerprint*, never a `key_id`.** Key rows do not sync, and
+  `import_key` / `generate_key` mint a fresh uuid on every machine, so a synced id would
+  point at nothing - or at a different key that took the id. Applying resolves the
+  fingerprint against the local keychain and stores NULL when the key is not here.
+- **A whole pull is applied in one transaction with `defer_foreign_keys`.** A host and its
+  group can land on either side of a page boundary. A reference to something this device
+  genuinely lacks becomes NULL rather than failing the record - refusing a host over a
+  missing identity leaves the user with nothing.
+- **`apply` clears the dirty flag after writing**, because the domain write fires the
+  table's own trigger. Without that, every pulled record would be pushed straight back.
+  `a_pulled_record_is_not_pushed_straight_back` is the test.
+- **Settings sync by allow-list** (`sync/settings.rs`), enforced on the way out *and* the
+  way in. `ssh.agentSocket` is machine-specific; a laptop must not overwrite a desktop's
+  agent path with one that does not exist there.
+- **`SyncStatus.applied` exists so the stores know to reload.** The engine writes SQLite
+  underneath Pinia; without it the UI would show stale data until the next navigation.
+- **Sign-out keeps local data and re-dirties it**, so signing back in pushes rather than
+  loses. A mis-click must not be a way to delete everything.
+
+### Group sharing
+
+A shared group gets a random content key. Everything in that group **and every group
+beneath it** is sealed with it instead of the personal key, which is what lets a colleague
+read one branch and nothing else. `sync/groups.rs` holds the walk: `key_owner_map` maps
+each group to the nearest ancestor that has a key, so the lookup is one hash rather than a
+parent chase per record, and both it and `subtree` survive a parent cycle - SQLite will
+not stop two individually valid edits making a group its own ancestor.
+
+The key is wrapped to each member's X25519 public key with an anonymous sealed box, so the
+server routes a blob it cannot open and two members' wraps of the same key look unrelated.
+
+Four things here are not obvious:
+
+- **Records in a shared group are stored under the group *owner's* account**, whoever
+  pushed them. The route resolves that with `share_owner`. Filing a member's edit under
+  the member gives one record id two independent rows, and the owner - who pulls by
+  account - never sees it. `a_members_edit_lands_on_the_owners_copy` is the test.
+- **The owner is not a member of their own share.** A membership check that only matches
+  `user_id` locks out the person who did the sharing; `can_write_group` matches either
+  side, and allows a group with no shares at all so the first push of a group about to be
+  shared does not fail.
+- **Revoking rotates the key.** Deleting the share row only stops *new* records reaching
+  them - they already hold the old key. `unshare_group` generates a fresh key, re-wraps it
+  for whoever remains, and marks the subtree dirty so the next push re-seals it.
+  Whatever they already copied is theirs; nothing undoes that, and the toast says so.
+- **A tombstone has to keep its group.** The domain row is gone when a deletion is
+  collected, so `sync_meta` carries a `group_id` column maintained by the triggers
+  (migration 6 recreates them; SQLite cannot alter a trigger in place). A deletion
+  labelled personal is filed under the wrong account and the members never see it.
+
+Identities stay personal even inside a shared group: they are account-wide, so a shared
+host arrives with its identity link nulled, exactly as a key the far side lacks does.
+Group-scoped placeholders *are* sealed with the group key - they travel with the group,
+which is the point of declaring one there.
+
+A record sealed under a key this machine does not hold is **skipped**, not failed - a
+revoked share or a rotation not yet fetched leaves the local copy alone rather than
+replacing it with something unreadable. `fetch_shared_keys` runs at the start of every
+cycle, before push, for that reason.
+
+### Workspaces and device layouts
+
+Named workspaces sync as ordinary records - trigger, dirty flag, tombstone, like a host.
+
+The **live** layout does not. `session_state` has no trigger on purpose: it is rewritten
+400ms after every layout change, and a trigger would turn that into a push every 400ms.
+It is sent instead by `push_layout`, once per cycle and only when its clock has moved past
+`sync_state.layout_pushed_at`.
+
+Incoming layouts land in `device_layouts` (migration 7), never in `session_state`:
+
+- **A layout is offered, not applied.** Another machine's tabs replacing what is on screen
+  is a decision, not a sync outcome. The Workspaces menu grows an "Other devices" section;
+  opening one is a click.
+- **Your own layout coming back is ignored.** `apply` skips a `DeviceLayout` whose id is
+  this device, because the round trip would otherwise overwrite live tabs with whatever
+  was pushed last cycle. `a_devices_own_layout_coming_back_does_not_overwrite_its_tabs`.
+- **The record id *is* the device id**, so a machine has exactly one layout and pushing
+  again replaces it rather than accumulating one per save.
+- Signing out drops every stored layout: they mean nothing without the account.
+
+`sync_state.device_name` comes from the OS at sign-in, via the webview - `@tauri-apps/
+plugin-os` can ask and the Rust side has no dependency that can. A session created before
+this existed pushes no layout rather than an unnamed one.
+
+### Sync tests
+
+`src-tauri/tests/sync_roundtrip.rs` runs `collect` on one in-memory `Db` and `apply` on
+another - two devices, no server, no transport. That is where convergence, tombstones,
+tie-breaks and AAD tampering are covered. The server's own suite lives in
+`remotier-sync/server/tests/store.rs` and goes through the `Store` trait, so pointing it
+at Postgres runs the same tests against the other backend.
+
+### Building against the proto crate
+
+`src-tauri` depends on `remotier-sync-proto` as a **git dependency on GitHub**, not from
+crates.io. The crate is an implementation detail of two applications and nothing else
+should depend on it, so a registry buys nothing and publishing it would invite exactly
+that. `Cargo.lock` pins the resolved commit, so builds are reproducible either way.
+
+It is pinned by `rev` rather than `branch`: a lock file would pin a branch to a commit
+anyway, but a rev records which commit was *intended* rather than whichever one happened
+to be at the head of `main` that day. Move it to `tag` once the sync repo tags releases.
+
+`.cargo/config.toml` at the **repository root** sets `net.git-fetch-with-cli`. It is at the
+root and not under `src-tauri/` on purpose: cargo reads that file from the working
+directory and its ancestors only, and CI runs `cargo --manifest-path src-tauri/Cargo.toml`
+from the root, where a config nested inside `src-tauri` is silently ignored.
+
+That setting is insurance rather than a requirement while the sync repo is public -
+libgit2 fetches anonymous HTTPS fine. It matters the moment the repo goes private, when
+libgit2 fails with an authentication error naming neither the repository nor the
+credential it wanted, and the git CLI just works.
+
+The MSRV moved to **1.85** with that dependency: edition 2024 is in its graph, and an
+older Cargo fails while parsing a transitive manifest - which reads as a broken dependency
+rather than a stale toolchain.
+
+`reqwest` is pinned to rustls over `ring` and the provider is installed in
+`sync/client.rs`; rustls 0.23 has no default provider otherwise and every request fails at
+handshake with an error that does not mention providers. `cargo tree | grep aws-lc` must
+stay empty.
+
 
 ## Packaging
 

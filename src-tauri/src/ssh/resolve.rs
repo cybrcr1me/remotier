@@ -97,17 +97,24 @@ fn group_chain(db: &Db, group_id: Option<&str>) -> Result<Vec<Group>> {
     Ok(chain)
 }
 
+/// The account-wide scope. One account, so there is nothing to point at.
+pub const GLOBAL_SCOPE: &str = "global";
+pub const GLOBAL_SCOPE_ID: &str = "";
+
 /// Collect variable values, weakest scope first so nearer scopes overwrite.
 fn variable_values(db: &Db, host: &Host, chain: &[Group]) -> Result<HashMap<String, String>> {
     let mut builder = vars::ValueBuilder::new();
 
-    // Declared defaults, root group first.
+    // Declared defaults, weakest scope first: the account, then each group from the root
+    // down, then the host. A nearer scope overwrites a wider one.
+    builder.layer(defaults_for(db, GLOBAL_SCOPE, GLOBAL_SCOPE_ID)?);
     for group in chain.iter().rev() {
         builder.layer(defaults_for(db, "group", &group.id)?);
     }
     builder.layer(defaults_for(db, "host", &host.id)?);
 
     // Local answers override declared defaults, same ordering.
+    builder.layer(values_for(db, GLOBAL_SCOPE, GLOBAL_SCOPE_ID)?);
     for group in chain.iter().rev() {
         builder.layer(values_for(db, "group", &group.id)?);
     }

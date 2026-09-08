@@ -4,6 +4,7 @@ pub mod db;
 pub mod error;
 pub mod ssh;
 pub mod state;
+pub mod sync;
 pub mod vars;
 
 use tauri::Manager;
@@ -41,6 +42,18 @@ pub fn run() {
 
             let data_dir = app.path().app_data_dir()?;
             app.manage(AppState::new(&data_dir)?);
+
+            // Sync runs in the background from launch. It is a no-op while signed out,
+            // and a failure here must never stop the app starting - the same rule the
+            // key store follows.
+            {
+                let state = app.state::<AppState>();
+                sync::worker::spawn(
+                    app.handle().clone(),
+                    state.sync(),
+                    std::sync::Arc::clone(&state.db),
+                );
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -75,6 +88,18 @@ pub fn run() {
             commands::ssh::revoke_known_host,
             commands::ssh::preview_ssh_config,
             commands::ssh::import_ssh_config,
+            commands::sync::sync_status,
+            commands::sync::sync_probe_instance,
+            commands::sync::sync_register,
+            commands::sync::sync_login,
+            commands::sync::sync_recover,
+            commands::sync::sync_logout,
+            commands::sync::sync_now,
+            commands::sync::sync_devices,
+            commands::sync::sync_device_layout,
+            commands::sync::sync_share_group,
+            commands::sync::sync_list_shares,
+            commands::sync::sync_unshare_group,
             commands::settings::get_settings,
             commands::settings::set_setting,
             commands::settings::vault_status,

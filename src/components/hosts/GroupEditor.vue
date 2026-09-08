@@ -2,6 +2,7 @@
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
+import GroupSharing from '@/components/sync/GroupSharing.vue'
 import { Input } from '@/components/ui/input'
 import {
   Select,
@@ -267,6 +268,13 @@ async function setValue(name: string, value: string) {
             </div>
           </div>
         </template>
+
+        <!--
+          Sharing is per group, so it lives with the group rather than in Settings. It
+          renders nothing when signed out, and says to save first when the group is new -
+          there is no id to share until then.
+        -->
+        <GroupSharing :group-id="props.group?.id ?? null" />
       </div>
 
       <SheetFooter>

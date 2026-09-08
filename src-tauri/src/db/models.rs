@@ -242,6 +242,9 @@ impl SshKey {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum VarScope {
+    /// The whole account: one value for everything, with nothing to point at, so
+    /// `scope_id` is empty.
+    Global,
     Group,
     Host,
 }
@@ -249,8 +252,22 @@ pub enum VarScope {
 impl VarScope {
     pub fn as_str(self) -> &'static str {
         match self {
+            VarScope::Global => "global",
             VarScope::Group => "group",
             VarScope::Host => "host",
+        }
+    }
+
+    /// The inverse of `as_str`, for reading a row back.
+    ///
+    /// A `CHECK` constraint limits the column to these three, so an unrecognised value
+    /// cannot occur; it is mapped to the narrowest scope rather than panicking on a
+    /// database somebody has edited by hand.
+    pub fn from_db(value: &str) -> Self {
+        match value {
+            "global" => VarScope::Global,
+            "group" => VarScope::Group,
+            _ => VarScope::Host,
         }
     }
 }
@@ -278,7 +295,7 @@ impl VarDef {
         let scope: String = row.get(1)?;
         Ok(Self {
             id: row.get(0)?,
-            scope: if scope == "group" { VarScope::Group } else { VarScope::Host },
+            scope: VarScope::from_db(&scope),
             scope_id: row.get(2)?,
             name: row.get(3)?,
             label: row.get(4)?,
@@ -298,4 +315,20 @@ pub struct VarValue {
     pub scope_id: String,
     pub name: String,
     pub value: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `from_db` is the only thing that turns a stored scope back into a `VarScope`, and a
+    /// scope that does not survive the trip is invisible: the account bucket the frontend
+    /// builds is keyed on `Global`, so a declaration read back as `Host` vanishes from the
+    /// list the moment it is saved.
+    #[test]
+    fn var_scope_round_trips() {
+        for scope in [VarScope::Global, VarScope::Group, VarScope::Host] {
+            assert_eq!(VarScope::from_db(scope.as_str()), scope);
+        }
+    }
 }

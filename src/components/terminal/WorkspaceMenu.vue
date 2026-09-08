@@ -20,15 +20,19 @@ import {
 import { Field, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { errorMessage, ipc } from '@/lib/ipc'
-import type { Workspace } from '@/lib/types'
+import { lastSyncLabel } from '@/lib/sync-status'
+import type { DeviceLayout, Workspace } from '@/lib/types'
 import { useSessionsStore } from '@/stores/sessions'
-import { LayoutGridIcon, SaveIcon, TrashIcon } from '@lucide/vue'
-import { onMounted, ref } from 'vue'
+import { useSyncStore } from '@/stores/sync'
+import { LaptopIcon, LayoutGridIcon, SaveIcon, TrashIcon } from '@lucide/vue'
+import { onMounted, ref, watch } from 'vue'
 import { toast } from 'vue-sonner'
 
 const sessions = useSessionsStore()
+const sync = useSyncStore()
 
 const workspaces = ref<Workspace[]>([])
+const devices = ref<DeviceLayout[]>([])
 const saveOpen = ref(false)
 const name = ref('')
 const busy = ref(false)
@@ -38,6 +42,34 @@ async function load() {
     workspaces.value = await ipc.listWorkspaces()
   } catch (e) {
     toast.error('Could not load workspaces', { description: errorMessage(e) })
+  }
+
+  // Signed out, or nothing else has synced a layout: the section simply does not appear.
+  try {
+    devices.value = await sync.devices()
+  } catch (e) {
+    console.warn('could not list devices', errorMessage(e))
+    devices.value = []
+  }
+}
+
+/**
+ * Open another machine's tabs here.
+ *
+ * Never automatic. A layout arriving in the background and replacing what is on screen
+ * is the reason `apply` stores these rather than applying them.
+ */
+async function openDevice(device: DeviceLayout) {
+  try {
+    const layout = await sync.deviceLayout(device.deviceId)
+    await sessions.applyWorkspace(layout)
+    toast.success(`Opened tabs from ${device.name}`, {
+      description: 'Panes are ready to connect.',
+    })
+  } catch (e) {
+    toast.error(`Could not open the layout from ${device.name}`, {
+      description: errorMessage(e),
+    })
   }
 }
 
@@ -78,6 +110,14 @@ async function remove(workspace: Workspace) {
 }
 
 onMounted(load)
+
+// The menu can mount before bootstrap has read the sync status, and a device list built
+// while signed-out would then stay empty until a reload. Watching the two things that
+// change it - signing in, and a cycle that actually wrote something - covers both.
+watch(
+  () => [sync.status.signedIn, sync.status.lastSyncAt] as const,
+  () => void load(),
+)
 </script>
 
 <template>
@@ -111,6 +151,24 @@ onMounted(load)
           No saved workspaces
         </DropdownMenuItem>
       </DropdownMenuGroup>
+
+      <template v-if="devices.length">
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel>Other devices</DropdownMenuLabel>
+        <DropdownMenuGroup>
+          <DropdownMenuItem
+            v-for="device in devices"
+            :key="device.deviceId"
+            @select="openDevice(device)"
+          >
+            <LaptopIcon />
+            <span class="truncate">{{ device.name }}</span>
+            <span class="ml-auto shrink-0 text-xs text-muted-foreground">
+              {{ lastSyncLabel(device.updatedAt) }}
+            </span>
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
+      </template>
 
       <DropdownMenuSeparator />
       <DropdownMenuGroup>

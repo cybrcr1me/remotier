@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import PlaceholderSettings from '@/components/settings/PlaceholderSettings.vue'
+import SyncSettings from '@/components/settings/SyncSettings.vue'
 import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -54,6 +57,14 @@ onMounted(async () => {
         </AlertDescription>
       </Alert>
 
+      <Tabs default-value="general" class="gap-4">
+        <TabsList>
+          <TabsTrigger value="general">General</TabsTrigger>
+          <TabsTrigger value="placeholders">Placeholders</TabsTrigger>
+          <TabsTrigger value="sync">Sync</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="general" class="flex flex-col gap-4">
       <Card>
         <CardHeader>
           <CardTitle>Terminal</CardTitle>
@@ -145,6 +156,16 @@ onMounted(async () => {
           </FieldGroup>
         </CardContent>
       </Card>
+        </TabsContent>
+
+        <TabsContent value="placeholders">
+          <PlaceholderSettings />
+        </TabsContent>
+
+        <TabsContent value="sync">
+          <SyncSettings />
+        </TabsContent>
+      </Tabs>
     </div>
   </ScrollArea>
 </template>

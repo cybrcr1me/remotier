@@ -52,8 +52,19 @@ jobs:
       - name: Clippy
         run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
       - name: Tests
-        # The live SSH tests are #[ignore]d and need a real sshd; see ssh-live.yml.
+        # The live SSH tests are #[ignore]d and need a real sshd; see the ssh-live job.
         run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: No C toolchain dependencies
+        # aws-lc-rs wants CMake and NASM on Windows and openssl-sys a system OpenSSL.
+        # Either would break the cross-platform build, which is why russh and reqwest are
+        # both pinned to ring. A transitive dep can reintroduce one at any time.
+        run: |
+          if cargo tree --manifest-path src-tauri/Cargo.toml --prefix none \
+               | grep -iE '^(aws-lc|openssl-sys)'; then
+            echo "::error::a C-toolchain crate entered the dependency graph"
+            exit 1
+          fi
 
   ssh-live:
     runs-on: ubuntu-22.04

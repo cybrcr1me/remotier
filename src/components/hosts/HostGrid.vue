@@ -48,15 +48,23 @@ function contents(node: GroupNode): string {
     -->
     <ContextMenu v-for="node in groups" :key="node.id">
       <ContextMenuTrigger as-child>
-        <button
-          type="button"
+        <!--
+          A div rather than a button: the card carries an edit button of its own, and a
+          button inside a button is invalid and does not reliably fire. Keyboard activation
+          is wired by hand to keep what the element loses.
+        -->
+        <div
+          role="button"
+          tabindex="0"
           :class="cn(
-            'group relative flex flex-col gap-3 rounded-xl border bg-card p-4 text-left',
+            'group relative flex cursor-pointer flex-col gap-3 rounded-xl border bg-card p-4 text-left',
             'transition-colors hover:border-ring focus-visible:border-ring focus-visible:outline-none',
             colorBorder(node.group.color),
           )"
           :aria-label="`Open ${node.name}`"
           @click="emit('open', node.id)"
+          @keydown.enter.prevent="emit('open', node.id)"
+          @keydown.space.prevent="emit('open', node.id)"
         >
           <div class="flex items-start gap-3">
             <span
@@ -73,9 +81,28 @@ function contents(node: GroupNode): string {
               <p class="truncate text-xs text-muted-foreground">{{ contents(node) }}</p>
             </div>
 
+            <!--
+              Same affordance the host cards have. A context menu alone is not discoverable:
+              nothing on the card said a group could be edited at all.
+            -->
+            <Tooltip>
+              <TooltipTrigger as-child>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  class="size-7 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+                  :aria-label="`Edit ${node.name}`"
+                  @click.stop="emit('editGroup', node.id)"
+                >
+                  <PencilIcon />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Edit group</TooltipContent>
+            </Tooltip>
+
             <ChevronRightIcon class="size-4 shrink-0 text-muted-foreground" />
           </div>
-        </button>
+        </div>
       </ContextMenuTrigger>
 
       <ContextMenuContent>
