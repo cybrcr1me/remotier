@@ -24,6 +24,10 @@ impl Device {
     }
 
     fn collect(&self, key: &crypto::ContentKey) -> Vec<Envelope> {
+        self.batch(key).envelopes
+    }
+
+    fn batch(&self, key: &crypto::ContentKey) -> collect::Batch {
         self.db
             .read(|conn| collect::collect(conn, &Keyring::personal_only(key.clone()), self.id, 500))
             .unwrap()
@@ -536,7 +540,7 @@ fn a_record_in_a_shared_group_is_sealed_with_the_group_key() {
     a.add_host("h1", "terminal.shop", Some("g1"), 100);
 
     let keys = shared_keyring(&a, &personal, "g1", &group_key);
-    let batch = a.db.read(|conn| collect::collect(conn, &keys, "dev-a", 500)).unwrap();
+    let batch = a.db.read(|conn| collect::collect(conn, &keys, "dev-a", 500)).unwrap().envelopes;
 
     let host = batch.iter().find(|e| e.id == "h1").unwrap();
     assert_eq!(
@@ -563,7 +567,7 @@ fn sharing_covers_the_whole_subtree() {
     a.add_host("deep", "deep.example", Some("g2"), 100);
 
     let keys = shared_keyring(&a, &personal, "g1", &group_key);
-    let batch = a.db.read(|conn| collect::collect(conn, &keys, "dev-a", 500)).unwrap();
+    let batch = a.db.read(|conn| collect::collect(conn, &keys, "dev-a", 500)).unwrap().envelopes;
 
     let deep = batch.iter().find(|e| e.id == "deep").unwrap();
     assert_eq!(
@@ -584,7 +588,7 @@ fn a_record_outside_the_shared_group_stays_personal() {
     a.add_host("outside", "out.example", None, 100);
 
     let keys = shared_keyring(&a, &personal, "g1", &group_key);
-    let batch = a.db.read(|conn| collect::collect(conn, &keys, "dev-a", 500)).unwrap();
+    let batch = a.db.read(|conn| collect::collect(conn, &keys, "dev-a", 500)).unwrap().envelopes;
 
     let outside = batch.iter().find(|e| e.id == "outside").unwrap();
     assert_eq!(outside.key_ref, remotier_sync_proto::record::KeyRef::Personal);
@@ -608,7 +612,8 @@ fn a_member_reads_the_shared_group_and_nothing_else() {
     let mut batch = owner
         .db
         .read(|conn| collect::collect(conn, &owner_keys, "dev-a", 500))
-        .unwrap();
+        .unwrap()
+        .envelopes;
     for (i, e) in batch.iter_mut().enumerate() {
         e.seq = i as i64 + 1;
     }
@@ -639,7 +644,8 @@ fn losing_the_group_key_skips_those_records_without_losing_the_rest() {
     let mut batch = owner
         .db
         .read(|conn| collect::collect(conn, &owner_keys, "dev-a", 500))
-        .unwrap();
+        .unwrap()
+        .envelopes;
     for (i, e) in batch.iter_mut().enumerate() {
         e.seq = i as i64 + 1;
     }
@@ -673,7 +679,8 @@ fn a_rotated_key_makes_the_old_one_useless_for_new_records() {
     let batch = owner
         .db
         .read(|conn| collect::collect(conn, &keys, "dev-a", 500))
-        .unwrap();
+        .unwrap()
+        .envelopes;
     let host = batch.iter().find(|e| e.id == "h1").unwrap();
 
     let aad = host.aad();
@@ -706,7 +713,7 @@ fn a_group_scoped_placeholder_travels_with_its_group() {
     .unwrap();
 
     let keys = shared_keyring(&a, &personal, "g1", &group_key);
-    let batch = a.db.read(|conn| collect::collect(conn, &keys, "dev-a", 500)).unwrap();
+    let batch = a.db.read(|conn| collect::collect(conn, &keys, "dev-a", 500)).unwrap().envelopes;
 
     let group_scoped = batch.iter().find(|e| e.id == "d1").unwrap();
     assert_eq!(
@@ -733,7 +740,7 @@ fn a_tombstone_for_a_shared_record_keeps_the_group_key() {
 
     let keys = shared_keyring(&a, &personal, "g1", &group_key);
     // Push once, so sync_meta records where the host lives.
-    let batch = a.db.read(|conn| collect::collect(conn, &keys, "dev-a", 500)).unwrap();
+    let batch = a.db.read(|conn| collect::collect(conn, &keys, "dev-a", 500)).unwrap().envelopes;
     let accepted: Vec<_> = batch
         .iter()
         .enumerate()
@@ -746,7 +753,7 @@ fn a_tombstone_for_a_shared_record_keeps_the_group_key() {
     a.db.write(|tx| collect::mark_pushed(tx, &accepted)).unwrap();
 
     a.delete_host("h1");
-    let batch = a.db.read(|conn| collect::collect(conn, &keys, "dev-a", 500)).unwrap();
+    let batch = a.db.read(|conn| collect::collect(conn, &keys, "dev-a", 500)).unwrap().envelopes;
     let tombstone = batch.iter().find(|e| e.id == "h1").unwrap();
 
     assert!(tombstone.deleted_at.is_some());
@@ -960,4 +967,48 @@ fn a_workspace_travels_like_any_other_record() {
         })
         .unwrap();
     assert_eq!(name.as_deref(), Some("Deploy"));
+}
+
+#[test]
+fn a_record_that_will_never_be_sent_does_not_stay_pending_forever() {
+    // The symptom this pins: "1 change waiting" that never clears. A setting the
+    // allow-list excludes produces no envelope, and leaving its dirty flag set means the
+    // pending count never reaches zero and every cycle re-examines the same row.
+    let key = key();
+    let a = Device::new("dev-a");
+
+    a.set_setting("ssh.agentSocket", "/opt/homebrew/var/run/agent.sock", 100);
+    a.set_setting("terminal.fontSize", "14", 100);
+
+    let batch = a.batch(&key);
+    assert_eq!(batch.envelopes.len(), 1, "only the syncable setting is sent");
+    assert_eq!(batch.skipped.len(), 1, "the machine-specific one is reported as skipped");
+    assert_eq!(batch.consumed(), 2, "both dirty rows were dealt with");
+
+    a.db
+        .write(|tx| collect::mark_skipped(tx, &batch.skipped))
+        .unwrap();
+
+    // The excluded setting is no longer pending, and is not offered again.
+    assert_eq!(a.dirty(), 1, "only the record actually awaiting a push is pending");
+    let again = a.batch(&key);
+    assert!(again.skipped.is_empty());
+}
+
+#[test]
+fn clearing_a_skipped_record_does_not_touch_the_others() {
+    let key = key();
+    let a = Device::new("dev-a");
+
+    a.add_host("h1", "terminal.shop", None, 100);
+    a.set_setting("ssh.agentSocket", "/somewhere.sock", 100);
+
+    let batch = a.batch(&key);
+    a.db
+        .write(|tx| collect::mark_skipped(tx, &batch.skipped))
+        .unwrap();
+
+    // The host is still waiting to go.
+    assert_eq!(a.collect(&key).len(), 1);
+    assert_eq!(a.dirty(), 1);
 }

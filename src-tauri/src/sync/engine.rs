@@ -356,7 +356,15 @@ impl SyncEngine {
     async fn run(&self, client: &Client, access: &str, state: &state::SyncState) -> Result<()> {
         // Keys first: a record sealed under a group key this machine has not collected
         // yet would be skipped, and skipped records are not retried until they change.
-        self.fetch_shared_keys(client, access).await?;
+        //
+        // Not fatal, though. Sharing is optional and this is the only call in a cycle
+        // that a server without it would refuse - letting it abort would mean an older
+        // instance, or one blip on this endpoint, stops a device syncing its own data at
+        // all. The worst case is that a shared group stays unreadable for another minute.
+        if let Err(e) = self.fetch_shared_keys(client, access).await {
+            log::warn!("sync: could not refresh shared group keys: {e}");
+        }
+
         self.push(client, access, state).await?;
         self.push_layout(client, access, state).await?;
         self.pull(client, access, state).await
@@ -413,10 +421,22 @@ impl SyncEngine {
             if batch.is_empty() {
                 return Ok(());
             }
-            let count = batch.len();
+            let consumed = batch.consumed();
+
+            // Records that will never be sent - a setting the allow-list excludes, say -
+            // are cleared here rather than left dirty. Leaving them set makes the pending
+            // count stick above zero permanently, so the UI reports work that is never
+            // going to happen and every cycle re-examines the same rows.
+            if !batch.skipped.is_empty() {
+                let skipped = batch.skipped;
+                self.db.write(|tx| collect::mark_skipped(tx, &skipped))?;
+            }
+            if batch.envelopes.is_empty() {
+                return Ok(());
+            }
 
             // Phase two: the network, with no lock held.
-            let response = client.push(access, batch).await?;
+            let response = client.push(access, batch.envelopes).await?;
 
             // Phase three: record what happened.
             self.db.write(|tx| {
@@ -453,7 +473,7 @@ impl SyncEngine {
                     "the server refused {refused_permanently} record(s) - check this device's clock"
                 )));
             }
-            if count < PUSH_BATCH {
+            if consumed < PUSH_BATCH {
                 return Ok(());
             }
         }

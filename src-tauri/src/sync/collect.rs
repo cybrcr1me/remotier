@@ -26,6 +26,30 @@ struct Dirty {
     updated_at: i64,
 }
 
+/// What a pass over the dirty records produced.
+#[derive(Debug, Default)]
+pub struct Batch {
+    pub envelopes: Vec<Envelope>,
+    /// Records that are dirty but will never be sent: a setting the allow-list excludes,
+    /// or a row deleted before it was ever pushed.
+    ///
+    /// Their flag has to be cleared too. Leaving it set means the pending count never
+    /// reaches zero - the UI reports "1 change waiting" for the life of the install, and
+    /// every cycle re-examines a record it has already decided to skip.
+    pub skipped: Vec<(&'static str, String)>,
+}
+
+impl Batch {
+    /// How many dirty records this pass consumed, sent or not.
+    pub fn consumed(&self) -> usize {
+        self.envelopes.len() + self.skipped.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.consumed() == 0
+    }
+}
+
 /// Build the push batch.
 ///
 /// `limit` bounds a single push; the worker loops until nothing is left, so a first sync
@@ -35,7 +59,7 @@ pub fn collect(
     keys: &Keyring,
     device_id: &str,
     limit: usize,
-) -> Result<Vec<Envelope>> {
+) -> Result<Batch> {
     let dirty = query_all(
         conn,
         "SELECT kind, id, deleted_at, updated_at FROM sync_meta
@@ -54,13 +78,25 @@ pub fn collect(
         },
     )?;
 
-    let mut out = Vec::with_capacity(dirty.len());
+    let mut out = Batch::default();
     for record in dirty {
-        if let Some(envelope) = envelope_for(conn, keys, device_id, &record)? {
-            out.push(envelope);
+        match envelope_for(conn, keys, device_id, &record)? {
+            Some(envelope) => out.envelopes.push(envelope),
+            None => out.skipped.push((record.kind.as_str(), record.id.clone())),
         }
     }
     Ok(out)
+}
+
+/// Clear the flag on records that were deliberately not sent.
+pub fn mark_skipped(tx: &rusqlite::Transaction, skipped: &[(&str, String)]) -> Result<()> {
+    for (kind, id) in skipped {
+        tx.execute(
+            "UPDATE sync_meta SET local_dirty = 0 WHERE kind = ?1 AND id = ?2",
+            rusqlite::params![kind, id],
+        )?;
+    }
+    Ok(())
 }
 
 fn envelope_for(
