@@ -7,6 +7,7 @@ import {
   flattenHosts,
   groupIds,
   groupNodes,
+  hostNodes,
   nodesAt,
   summarise,
   treeHosts,
@@ -58,6 +59,20 @@ function asGroup(node: unknown): GroupNode {
   if (candidate?.kind !== 'group') throw new Error('expected a group node')
   return candidate
 }
+
+describe('hostNodes', () => {
+  it('keeps the hosts at one level, in order, apart from the groups beside them', () => {
+    // The hosts view shows every level as two categories, groups then hosts, so this and
+    // `groupNodes` have to split a level cleanly, with nothing lost between them.
+    const tree = buildTree(
+      [group('prod', 'Production')],
+      [host('b', 'bravo'), host('a', 'alpha'), host('web-1', 'web', 'prod')],
+    )
+
+    expect(hostNodes(tree).map(node => node.id)).toEqual(['a', 'b'])
+    expect(groupNodes(tree).length + hostNodes(tree).length).toBe(tree.length)
+  })
+})
 
 describe('buildTree', () => {
   it('nests groups by parent', () => {

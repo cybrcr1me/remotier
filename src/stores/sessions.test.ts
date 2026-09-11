@@ -195,6 +195,40 @@ describe('sessions', () => {
     expect(store.detachSession('missing')).toBeNull()
   })
 
+  it('closes the pane whose shell exited, disconnecting nothing', async () => {
+    const store = useSessionsStore()
+    const tab = store.openTab()
+    const first = tab.activePaneId
+    const second = store.splitActivePane('row')!
+    store.attachSession(tab.id, second.id, 'session-2')
+
+    await store.closeExitedSession('session-2')
+
+    expect(listPanes(store.tabs[0].layout).map(pane => pane.id)).toEqual([first])
+    // The session is already over on the server; disconnecting it again could only fail.
+    expect(sshDisconnect).not.toHaveBeenCalled()
+  })
+
+  it('closes the tab when the shell that exited held its last pane', async () => {
+    const store = useSessionsStore()
+    const tab = store.openTab()
+    store.attachSession(tab.id, tab.activePaneId, 'session-1')
+
+    await store.closeExitedSession('session-1')
+
+    expect(store.tabs).toHaveLength(0)
+  })
+
+  it('leaves every pane alone for a session nothing holds', async () => {
+    const store = useSessionsStore()
+    store.openTab()
+
+    await store.closeExitedSession('missing')
+
+    expect(store.tabs).toHaveLength(1)
+    expect(listPanes(store.tabs[0].layout)).toHaveLength(1)
+  })
+
   it('records a divider drag', () => {
     const store = useSessionsStore()
     const tab = store.openTab()

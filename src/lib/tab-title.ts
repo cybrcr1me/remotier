@@ -49,14 +49,45 @@ export function tabTitle(node: LayoutNode, labelOf: LabelLookup, fallback = UNTI
 }
 
 /**
- * The host a tab stands for - whose icon and colour it wears - or `null` for none yet.
- *
- * Taken from the host of the tab's active pane rather than from whatever it holds: a tab
- * can carry several hosts with several colours, and mixing them produces either a lie or a
- * stripe. The active pane is the one the tab would show if you clicked it, which makes the
- * icon and colour a promise the tab can keep.
+ * The host of the tab's active pane, or `null` for none yet: the one whose icon a
+ * single-pane tab wears. A split tab shows a split icon instead (`tabIsSplit`) and is tinted
+ * by all of its hosts (`tabColors`), never by whichever pane happens to be focused.
  */
 export function tabHostId(node: LayoutNode, activePaneId: string): string | null {
   const pane = findPane(node, activePaneId) ?? listPanes(node)[0] ?? null
   return pane?.hostId ?? null
+}
+
+/**
+ * True when the tab holds more than one pane. Such a tab shows a split icon: any one
+ * host's icon would claim the whole tab is that host. Each pane's chip carries its own.
+ */
+export function tabIsSplit(node: LayoutNode): boolean {
+  return listPanes(node).length > 1
+}
+
+/**
+ * The colours a tab is tinted in: each distinct colour among its hosts, in pane order, with
+ * `null` for a host that has none. Empty when no host has one.
+ *
+ * All of them rather than the active pane's, the same as the title and icon: a split tab
+ * tinted in one host's colour claims the whole tab is that host. `null` stays in as a stop
+ * so a tab that is only partly one colour does not look entirely so.
+ */
+export function tabColors(
+  node: LayoutNode,
+  colorOf: (hostId: string) => string | null,
+): (string | null)[] {
+  const hosts = new Set<string>()
+  const colors: (string | null)[] = []
+
+  for (const pane of listPanes(node)) {
+    // An empty pane has no host to speak for, the same as in the title.
+    if (!pane.hostId || hosts.has(pane.hostId)) continue
+    hosts.add(pane.hostId)
+    const color = colorOf(pane.hostId)
+    if (!colors.includes(color)) colors.push(color)
+  }
+
+  return colors.some(color => color !== null) ? colors : []
 }

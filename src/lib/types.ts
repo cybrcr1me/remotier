@@ -218,6 +218,7 @@ export interface AgentKey {
 
 /** Emitted on `ssh://session` when a session ends. */
 export type SessionEvent =
+  /** `exitStatus` is set only when the shell exited on its own, which closes its pane. */
   | { kind: 'closed', sessionId: string, exitStatus: number | null }
   | { kind: 'failed', sessionId: string, message: string }
   /** The connection died under us. The backend's watchdog found it, not the user. */

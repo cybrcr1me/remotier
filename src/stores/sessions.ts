@@ -218,6 +218,20 @@ export const useSessionsStore = defineStore('sessions', () => {
     return null
   }
 
+  /**
+   * Close the pane whose shell exited, and its tab with it when that was the last pane.
+   *
+   * Only for a shell that exited on its own - `exit`, logout, Ctrl-D. A session lost or
+   * closed without an exit status keeps its pane, because that is where Reconnect is.
+   * Detached first: the session is already over, so there is nothing to disconnect.
+   */
+  async function closeExitedSession(sessionId: string) {
+    const paneId = detachSession(sessionId)
+    if (!paneId) return
+    const tabId = tabIdForPane(paneId)
+    if (tabId) await closePane(tabId, paneId)
+  }
+
   function setSizes(tabId: string, splitId: string, sizes: number[]) {
     const tab = tabById(tabId)
     if (tab) tab.layout = setSizesInTree(tab.layout, splitId, sizes)
@@ -449,6 +463,7 @@ export const useSessionsStore = defineStore('sessions', () => {
     setPaneHost,
     attachSession,
     detachSession,
+    closeExitedSession,
     setSizes,
     renameTab,
     tabIdForPane,

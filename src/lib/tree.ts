@@ -204,11 +204,17 @@ export function groupNodes(nodes: TreeNode[]): GroupNode[] {
   return nodes.filter((node): node is GroupNode => node.kind === 'group')
 }
 
+/**
+ * The host nodes directly among `nodes`, in order, without descending into groups. With
+ * `groupNodes`, the two categories every level of the hosts view is shown as.
+ */
+export function hostNodes(nodes: TreeNode[]): HostNode[] {
+  return nodes.filter((node): node is HostNode => node.kind === 'host')
+}
+
 /** The hosts directly among `nodes`, without descending into groups. */
 export function directHosts(nodes: TreeNode[]): FlatHost[] {
-  return nodes
-    .filter((node): node is HostNode => node.kind === 'host')
-    .map(node => ({ host: node.host, groupPath: [] }))
+  return hostNodes(nodes).map(node => ({ host: node.host, groupPath: [] }))
 }
 
 /** A group as an option in a picker, with the nesting flattened onto it. */

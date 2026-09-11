@@ -7,6 +7,9 @@ import {
   EmptyTitle,
 } from '@/components/ui/empty'
 import ConnectionPanel from './ConnectionPanel.vue'
+import EntityIcon from '@/components/hosts/EntityIcon.vue'
+import { Button } from '@/components/ui/button'
+import { colorText, hasColor } from '@/lib/appearance'
 import {
   actionEntry,
   appendEntry,
@@ -35,7 +38,7 @@ import { useSettingsStore } from '@/stores/settings'
 import { Channel } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { WebglAddon } from '@xterm/addon-webgl'
-import { GripVerticalIcon, TerminalIcon } from '@lucide/vue'
+import { GripVerticalIcon, TerminalIcon, XIcon } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { toast } from 'vue-sonner'
 import '@xterm/xterm/css/xterm.css'
@@ -87,11 +90,22 @@ const target = computed(() => pane.value?.target.value ?? null)
 
 let resizeObserver: ResizeObserver | null = null
 let resizeTimer: number | undefined
+const paneHost = computed(() => (props.hostId ? inventory.hostById.get(props.hostId) ?? null : null))
+
 /** The pane's own name, taken from the same host label the tab bar shows. */
 const paneTitle = computed(() => {
   if (!props.hostId) return 'No host'
-  return inventory.hostById.get(props.hostId)?.label ?? 'Unknown host'
+  return paneHost.value?.label ?? 'Unknown host'
 })
+
+/**
+ * Close this pane, and its tab with it when it is the last one. The tab is looked up
+ * rather than taken from props: panes move between tabs.
+ */
+function closeThisPane() {
+  const tabId = sessions.tabIdForPane(props.paneId)
+  if (tabId) void sessions.closePane(tabId, props.paneId)
+}
 
 /** The zone a drag is currently hovering, which is also the highlight to draw. */
 const hoverZone = ref<DropZone | null>(null)
@@ -177,8 +191,7 @@ async function connect() {
     console.warn('could not subscribe to connection progress:', errorMessage(e))
   }
 
-  const onData = new Channel<ArrayBuffer>()
-  onData.onmessage = (chunk) => {
+  const onOutput = (chunk: ArrayBuffer) => {
     term.write(new Uint8Array(chunk))
     // Drives the unread dot. Asked by pane rather than told a tab id: this handler
     // outlives the component, so a captured `props.tabId` would be wrong the moment the
@@ -189,7 +202,16 @@ async function connect() {
   try {
     const sessionId = await connectWithHostKeyPrompt({
       request: { hostId: props.hostId, cols: term.cols, rows: term.rows, attemptId },
-      connect: request => ipc.sshConnect(request, onData),
+      /*
+       * A new channel for every attempt. When a failed attempt drops the Rust end, Tauri
+       * sends an end message and the webview unregisters the handler - so a retry reusing
+       * the first attempt's channel connects, and its output goes nowhere.
+       */
+      connect: (request) => {
+        const onData = new Channel<ArrayBuffer>()
+        onData.onmessage = onOutput
+        return ipc.sshConnect(request, onData)
+      },
       askAboutHostKey: prompt =>
         new Promise(resolve => emit('hostKey', prompt, resolve)),
       askAboutVariables: names =>
@@ -344,32 +366,54 @@ defineExpose({ focus: () => pane.value?.term.focus(), connect })
     <div v-show="hostId" ref="host" class="isolate min-h-0 flex-1 px-2 pt-2" />
 
     <!--
-      The pane's chip: what this pane is connected to, and its drag handle. Panes in a
-      split are otherwise indistinguishable once a shell has drawn over them, and a tab
-      title covering four panes cannot say which is which. It is shown for an empty pane too,
-      so a pane with no host yet can still be dragged somewhere useful.
+      The pane's chip: the tab's anatomy, per pane - the host's icon and name, a drag
+      handle, and a close button. Panes in a split are otherwise indistinguishable once a
+      shell has drawn over them, and a split tab shows a split icon rather than claiming to
+      be any one host. It is shown for an empty pane too, so a pane with no host yet can
+      still be dragged somewhere useful.
 
-      The terminal owns click and selection across its whole
-      surface, so the pane cannot be `draggable` itself - dragging would take precedence
-      over selecting text, which is the thing people do in a terminal all day. A div
-      rather than a button: WebKit is unreliable about dragging form controls.
+      The terminal owns click and selection across its whole surface, so the pane cannot
+      be `draggable` itself - dragging would take precedence over selecting text, which is
+      the thing people do in a terminal all day. The handle is a div rather than a button:
+      WebKit is unreliable about dragging form controls. The close button sits beside the
+      handle rather than inside it, so no control is nested in another.
     -->
     <div
-      draggable="true"
-      role="button"
-      tabindex="0"
       :class="cn(
-        'absolute right-1 top-1 z-20 flex max-w-[70%] cursor-grab items-center gap-1 rounded-md border bg-card px-1.5 py-0.5 text-xs transition-opacity active:cursor-grabbing',
-        'opacity-0 focus-visible:opacity-100 group-hover/pane:opacity-100',
+        'absolute right-1 top-1 z-20 flex max-w-[70%] items-center gap-0.5 rounded-md border bg-card py-0.5 pr-0.5 pl-1.5 text-xs transition-opacity',
+        'opacity-0 focus-within:opacity-100 group-hover/pane:opacity-100',
         active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
       )"
-      :aria-label="`Move ${paneTitle}`"
-      :title="`Drag ${paneTitle} onto another pane's edge`"
-      @dragstart="onPaneDragStart"
-      @dragend="endDrag"
     >
-      <GripVerticalIcon class="size-3 shrink-0" />
-      <span class="truncate">{{ paneTitle }}</span>
+      <div
+        draggable="true"
+        role="button"
+        tabindex="0"
+        class="flex min-w-0 cursor-grab items-center gap-1.5 active:cursor-grabbing"
+        :aria-label="`Move ${paneTitle}`"
+        :title="`Drag ${paneTitle} onto another pane's edge`"
+        @dragstart="onPaneDragStart"
+        @dragend="endDrag"
+      >
+        <GripVerticalIcon class="size-3 shrink-0" />
+        <EntityIcon
+          v-if="paneHost"
+          :icon="paneHost.icon"
+          :class="cn('size-3.5 shrink-0', hasColor(paneHost.color) && colorText(paneHost.color))"
+          aria-hidden="true"
+        />
+        <TerminalIcon v-else class="size-3.5 shrink-0" aria-hidden="true" />
+        <span class="truncate">{{ paneTitle }}</span>
+      </div>
+      <Button
+        variant="ghost"
+        size="icon"
+        class="size-5 shrink-0 text-muted-foreground"
+        :aria-label="`Close ${paneTitle}`"
+        @click.stop="closeThisPane"
+      >
+        <XIcon class="size-3" />
+      </Button>
     </div>
 
     <!--

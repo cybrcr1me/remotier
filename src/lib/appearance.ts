@@ -93,6 +93,8 @@ export interface ColorOption {
   tint: string
   /** Foreground colour, for an icon. */
   text: string
+  /** The colour itself, for the one place a class cannot carry it: a gradient built from data. */
+  value: string
 }
 
 /**
@@ -107,6 +109,7 @@ export const COLORS: ColorOption[] = [
     swatch: 'bg-muted-foreground/40',
     tint: 'border-border bg-accent',
     text: 'text-muted-foreground',
+    value: 'var(--muted-foreground)',
   },
   {
     key: 'red',
@@ -115,6 +118,7 @@ export const COLORS: ColorOption[] = [
     swatch: 'bg-red-500',
     tint: 'border-red-500/40 bg-red-500/15',
     text: 'text-red-400',
+    value: 'var(--color-red-500)',
   },
   {
     key: 'amber',
@@ -123,6 +127,7 @@ export const COLORS: ColorOption[] = [
     swatch: 'bg-amber-500',
     tint: 'border-amber-500/40 bg-amber-500/15',
     text: 'text-amber-400',
+    value: 'var(--color-amber-500)',
   },
   {
     key: 'green',
@@ -131,6 +136,7 @@ export const COLORS: ColorOption[] = [
     swatch: 'bg-emerald-500',
     tint: 'border-emerald-500/40 bg-emerald-500/15',
     text: 'text-emerald-400',
+    value: 'var(--color-emerald-500)',
   },
   {
     key: 'teal',
@@ -139,6 +145,7 @@ export const COLORS: ColorOption[] = [
     swatch: 'bg-teal-500',
     tint: 'border-teal-500/40 bg-teal-500/15',
     text: 'text-teal-400',
+    value: 'var(--color-teal-500)',
   },
   {
     key: 'blue',
@@ -147,6 +154,7 @@ export const COLORS: ColorOption[] = [
     swatch: 'bg-blue-500',
     tint: 'border-blue-500/40 bg-blue-500/15',
     text: 'text-blue-400',
+    value: 'var(--color-blue-500)',
   },
   {
     key: 'violet',
@@ -155,6 +163,7 @@ export const COLORS: ColorOption[] = [
     swatch: 'bg-violet-500',
     tint: 'border-violet-500/40 bg-violet-500/15',
     text: 'text-violet-400',
+    value: 'var(--color-violet-500)',
   },
   {
     key: 'pink',
@@ -163,6 +172,7 @@ export const COLORS: ColorOption[] = [
     swatch: 'bg-pink-500',
     tint: 'border-pink-500/40 bg-pink-500/15',
     text: 'text-pink-400',
+    value: 'var(--color-pink-500)',
   },
 ]
 
@@ -181,6 +191,46 @@ export function colorTint(key: string | null | undefined): string {
 /** Icon colour for a stored colour key. Unknown keys get the muted foreground. */
 export function colorText(key: string | null | undefined): string {
   return (key && COLOR_MAP.get(key)?.text) || 'text-muted-foreground'
+}
+
+/*
+ * A type alias, not an interface: Vue's `CSSProperties` has an index signature for custom
+ * properties, and only an alias gets the implicit one that makes it assignable to `:style`.
+ */
+export type GradientStyle = {
+  backgroundImage: string
+  backgroundOrigin: string
+  backgroundClip: string
+}
+
+/**
+ * A tint blended left to right through several colours, for a selected surface that
+ * belongs to all of them at once - a tab split across hosts. `null`, `default` and unknown
+ * keys are stops with no colour, which keeps a surface that is only partly one colour from
+ * looking entirely so.
+ *
+ * An inline style because the stops are data: Tailwind's gradient utilities are fixed class
+ * names with three stops at most. The fill is mixed into the background rather than left
+ * translucent, so the border gradient painted beneath it shows only in the border - the
+ * element needs `border-transparent` for that. 15% and 40% match `tint`.
+ */
+export function tintGradient(keys: (string | null)[]): GradientStyle {
+  const values = keys.map(key => (hasColor(key) ? (COLOR_MAP.get(key as string)?.value ?? null) : null))
+  // A gradient needs two stops; a single colour repeats rather than failing to paint.
+  const stops = values.length === 1 ? [values[0], values[0]] : values
+
+  const fill = stops.map(value =>
+    value ? `color-mix(in oklab, ${value} 15%, var(--background))` : 'var(--accent)',
+  )
+  const border = stops.map(value =>
+    value ? `color-mix(in oklab, ${value} 40%, transparent)` : 'var(--border)',
+  )
+
+  return {
+    backgroundImage: `linear-gradient(to right, ${fill.join(', ')}), linear-gradient(to right, ${border.join(', ')})`,
+    backgroundOrigin: 'border-box',
+    backgroundClip: 'padding-box, border-box',
+  }
 }
 
 export function colorSwatch(key: string | null | undefined): string {

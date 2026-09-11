@@ -185,6 +185,14 @@ let unlisten: (() => void) | null = null
 
 onMounted(async () => {
   unlisten = await listen<SessionEvent>('ssh://session', ({ payload }) => {
+    // A shell that exited on its own - `exit`, logout, Ctrl-D - takes its pane with it,
+    // and the tab once no pane is left. Without an exit status the channel merely closed,
+    // and the pane stays where Reconnect is.
+    if (payload.kind === 'closed' && payload.exitStatus !== null) {
+      void sessions.closeExitedSession(payload.sessionId)
+      return
+    }
+
     // A lost connection is the backend's watchdog reporting that a round trip failed, so
     // the pane says so and offers to reconnect rather than quietly going blank. Marked
     // before detaching: detaching is what clears the pane's session.

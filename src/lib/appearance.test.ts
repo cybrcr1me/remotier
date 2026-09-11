@@ -11,6 +11,7 @@ import {
   groupIcon,
   hasColor,
   hostIcon,
+  tintGradient,
 } from './appearance'
 
 describe('icons', () => {
@@ -98,5 +99,40 @@ describe('colors', () => {
     expect(hasColor('default')).toBe(false)
     expect(hasColor(null)).toBe(false)
     expect(hasColor('nonsense')).toBe(false)
+  })
+})
+
+describe('tint gradient', () => {
+  it('gives every colour the value its swatch paints', () => {
+    for (const option of COLORS.filter(o => o.key !== 'default')) {
+      // `bg-red-500` paints `var(--color-red-500)`; a gradient stop has to be that colour.
+      expect(option.value, option.key).toBe(`var(--color-${option.swatch.replace(/^bg-/, '')})`)
+    }
+  })
+
+  it('blends the colours in order, with no colour as the neutral surface', () => {
+    const { backgroundImage } = tintGradient(['red', null, 'blue'])
+    const fill = backgroundImage.split('), linear-gradient')[0] ?? ''
+
+    const red = fill.indexOf('var(--color-red-500) 15%')
+    const neutral = fill.indexOf('var(--accent)')
+    const blue = fill.indexOf('var(--color-blue-500) 15%')
+    expect(red).toBeGreaterThan(-1)
+    expect(neutral).toBeGreaterThan(red)
+    expect(blue).toBeGreaterThan(neutral)
+    expect(backgroundImage).toContain('var(--border)')
+  })
+
+  it('paints the border gradient in the border only', () => {
+    // The fill is opaque and clipped to the padding box, so the border layer beneath it
+    // shows through nowhere else.
+    const style = tintGradient(['red', 'blue'])
+    expect(style.backgroundClip).toBe('padding-box, border-box')
+    expect(style.backgroundOrigin).toBe('border-box')
+    expect(style.backgroundImage).toContain('var(--color-red-500) 15%, var(--background)')
+  })
+
+  it('treats a default or unknown colour as none', () => {
+    expect(tintGradient(['default', 'chartreuse']).backgroundImage).not.toContain('--color-')
   })
 })

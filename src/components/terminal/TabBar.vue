@@ -3,14 +3,14 @@ import { Button } from '@/components/ui/button'
 import { insertionIndex, type Rect } from '@/lib/dnd'
 import { beginDrag, dragging, endDrag } from '@/lib/drag'
 import EntityIcon from '@/components/hosts/EntityIcon.vue'
-import { colorText, colorTint, hasColor } from '@/lib/appearance'
-import { tabHostId, tabTitle } from '@/lib/tab-title'
+import { colorText, colorTint, hasColor, tintGradient } from '@/lib/appearance'
+import { tabColors, tabHostId, tabIsSplit, tabTitle } from '@/lib/tab-title'
 import { TOOLBAR_HEIGHT } from '@/lib/ui'
 import { useInventoryStore } from '@/stores/inventory'
 import { cn } from '@/lib/utils'
 import { useSessionsStore } from '@/stores/sessions'
 import WorkspaceMenu from './WorkspaceMenu.vue'
-import { PlusIcon, TerminalIcon, XIcon } from '@lucide/vue'
+import { Columns2Icon, PlusIcon, TerminalIcon, XIcon } from '@lucide/vue'
 import { storeToRefs } from 'pinia'
 import { ref } from 'vue'
 
@@ -28,7 +28,7 @@ function titleOf(tab: { layout: TabLayout, name: string }) {
   return tabTitle(tab.layout, id => inventory.hostById.get(id)?.label ?? null, tab.name)
 }
 
-/** The host whose icon and colour the tab wears: its active pane's. */
+/** The host whose icon a single-pane tab wears, coloured in that host's colour. */
 function hostOf(tab: { layout: TabLayout, activePaneId: string }) {
   const id = tabHostId(tab.layout, tab.activePaneId)
   return id ? inventory.hostById.get(id) ?? null : null
@@ -39,17 +39,35 @@ function iconColorOf(tab: { layout: TabLayout, activePaneId: string }) {
   return hasColor(color) ? colorText(color) : null
 }
 
+/** Each distinct colour among the tab's hosts, in pane order; empty when none has one. */
+function colorsOf(tab: { layout: TabLayout }) {
+  return tabColors(tab.layout, (id) => {
+    const color = inventory.hostById.get(id)?.color
+    return color && hasColor(color) ? color : null
+  })
+}
+
 /*
- * The active tab is tinted in its host's colour, or in lime when the host has none. The
- * others carry the colour on their icon only: enough to tell hosts apart, without every
- * coloured tab looking selected.
+ * The active tab is tinted by all of its hosts, like its title: one colour solid, several
+ * blended left to right by `styleOf`, and lime when none has a colour. The others stay
+ * untinted - a single-pane tab's icon carries its host's colour, enough to tell hosts apart
+ * without every coloured tab looking selected.
  */
-function stateOf(tab: { id: string, layout: TabLayout, activePaneId: string }) {
+function stateOf(tab: { id: string, layout: TabLayout }) {
   if (tab.id !== activeTabId.value) {
     return 'border-transparent text-muted-foreground hover:bg-accent hover:text-foreground'
   }
-  const color = hostOf(tab)?.color
-  return cn('text-foreground', hasColor(color) ? colorTint(color) : 'border-primary/30 bg-primary/10')
+  const colors = colorsOf(tab)
+  if (colors.length === 0) return 'border-primary/30 bg-primary/10 text-foreground'
+  if (colors.length === 1) return cn('text-foreground', colorTint(colors[0]))
+  // The blend is painted by `styleOf`, through a border left clear for it.
+  return 'border-transparent text-foreground'
+}
+
+function styleOf(tab: { id: string, layout: TabLayout }) {
+  if (tab.id !== activeTabId.value) return undefined
+  const colors = colorsOf(tab)
+  return colors.length > 1 ? tintGradient(colors) : undefined
 }
 
 const emit = defineEmits<{ newTab: [] }>()
@@ -131,6 +149,7 @@ function onDrop(event: DragEvent) {
           stateOf(tab),
           dragging?.kind === 'tab' && dragging.tabId === tab.id && 'opacity-40',
         )"
+        :style="styleOf(tab)"
         @click="sessions.focusTab(tab.id)"
         @dragstart="onDragStart(tab.id, $event)"
         @dragend="onDragEnd"
@@ -151,9 +170,14 @@ function onDrop(event: DragEvent) {
           aria-hidden="true"
         />
 
-        <!-- A tab with no host yet shows a terminal, rather than a server it is not on. -->
+        <!--
+          A tab holding several panes shows a split icon: one host's icon would claim the
+          whole tab is that host, and each pane's chip already carries its own. A tab with
+          no host yet shows a terminal, rather than a server it is not on.
+        -->
+        <Columns2Icon v-if="tabIsSplit(tab.layout)" class="size-3.5 shrink-0" aria-hidden="true" />
         <EntityIcon
-          v-if="hostOf(tab)"
+          v-else-if="hostOf(tab)"
           :icon="hostOf(tab)?.icon"
           :class="cn('size-3.5 shrink-0', iconColorOf(tab))"
           aria-hidden="true"

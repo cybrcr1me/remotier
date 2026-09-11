@@ -45,7 +45,7 @@ Local-first SSH client (Termius alternative). Tauri 2 + Vue 3 + shadcn-vue.
 ```bash
 bun run tauri dev
 cd src-tauri && cargo test && cargo clippy -- -D warnings
-bunx vue-tsc --noEmit
+bunx vue-tsc -b   # not --noEmit: the root tsconfig has no files of its own, so that checks nothing
 ```
 
 ## Key store
@@ -81,7 +81,7 @@ and only secret-touching commands fail. Never make it panic in `setup()`.
 
 `connect-flow.ts` answers everything a connection can ask for - unresolved variables, an
 unknown host key, a password, a security key's PIN - and any of them can come up on the
-same attempt. Two rules keep that working:
+same attempt. Three rules keep that working:
 
 - **Every branch spreads `attempt`, never `request`.** Spreading the original throws away
   what earlier rounds collected, so a password given before the host key was queried is
@@ -90,6 +90,11 @@ same attempt. Two rules keep that working:
   prompt raised by *that* attempt has nowhere to be handled. This is exactly how an unknown
   host plus a hardware key failed with no PIN prompt at all: the host key branch returned
   its own `connect` call, so the `pinRequired` it raised escaped unanswered.
+- **Every attempt gets its own output `Channel`.** A failed attempt drops the Rust end;
+  Tauri then sends an end message and the webview unregisters the handler. A retry that
+  reuses the first attempt's channel connects, streams output to a handler that no longer
+  exists, and shows a blank terminal. A PIN-protected security key always needs a second
+  attempt, which is how this surfaced - but a host key or password prompt did the same.
 
 Each prompt is guarded so it cannot be asked twice, and the loop is bounded at one round
 per prompt plus the attempt that succeeds.
@@ -272,6 +277,13 @@ compile error, not a workaround. Use `@/lib/placeholder` to build the string in 
 
 Note `vue-tsc --noEmit` does **not** catch this - only `bun run build` does. Run the build,
 not just the typecheck, before calling frontend work done.
+
+## Optional boolean props
+
+Vue casts an absent `boolean` prop to `false`, not `undefined`. So
+`defineProps<{ showIcon?: boolean }>()` with `v-if="showIcon !== false"` hides the thing
+whenever the prop is left off - which is how the icon picker vanished from both editors
+for days. A boolean prop that should default on gets a real default from `withDefaults`.
 
 ## Session resume and workspaces
 
@@ -575,6 +587,9 @@ Three things there are easy to undo by accident:
 - **Dark only, but `<html class="dark">` stays.** The generated components carry `dark:`
   variants, which key off the class, not the token values. `:root` and `.dark` therefore
   resolve to the same palette so no unprefixed context can fall back to white.
+  The flip side: a generated component's `dark:` classes beat a plain override passed in
+  `class`. An outline button's selected border needs `dark:border-primary` as well as
+  `border-primary`, or `dark:border-input` wins and nothing looks selected.
 - **`cn-font-heading` is ours.** The nova preset stamps it on every generated title but
   never defines it; `index.css` does. It is the single point that decides the heading face.
 
@@ -650,11 +665,15 @@ distinguish two groups called "Staging" under different parents.
 - The picker speaks `string | null`; the editors keep the `INHERIT` sentinel they use
   everywhere else and bridge with a computed.
 
-Tabs in the terminal view take their icon and colour from one host (`tabHostId`): the
-**active pane's**. A tab can hold several hosts with several colours, and the active pane is
-the one the tab would show if you clicked it, so the colour is a promise the tab can keep.
-The active tab is tinted in that colour, or in lime when the host has none; the others carry
-the colour on their icon only. Every tab has a border, transparent unless active, so the
+A tab speaks for everything it holds, never for whichever pane happens to be focused. A
+single-pane tab wears its host's icon (`tabHostId`); a split tab shows a split icon
+(`tabIsSplit`), because any one host's icon would claim the whole tab is that host. The
+active tab is tinted the same way (`tabColors`): one colour solid, several blended left to
+right in pane order, lime when no host has one. A host with no colour stays in the blend as
+a neutral stop, so a tab that is only partly red does not look entirely red. The blend is an
+inline style (`tintGradient`): the stops are data, and Tailwind's gradient utilities are
+fixed class names with three stops at most. Inactive tabs are untinted; a single-pane tab's
+icon takes its host's colour, a split tab's icon none. Every tab has a border, transparent unless active, so the
 active tab is not a pixel larger than its neighbours. The close button is always shown:
 hidden until hover, it left an empty slot on every other tab and made them look lopsided.
 
@@ -675,6 +694,11 @@ path as group ids; `lib/tree.ts` does the walking (`nodesAt`, `breadcrumb`, `sum
 - The breadcrumb shows **whenever the grid is on**, including at the root, where it reads
   "All hosts". Gating it on being inside a group shifts every card down by the bar's height
   on the way in, and takes the way out with it on the way back.
+- **Groups and hosts are separate categories**, each under a label and in a grid of its
+  own. Sharing one grid let the first host trail on after the last folder, so nothing read
+  as where the folders ended. The list does the same at its top level only - there an
+  expanded last group ran straight into the ungrouped hosts; deeper down, the group a row
+  sits in already labels it.
 - New hosts and groups are created **in the open folder**, not at the root.
 - The path line on a host card only appears for search results. While browsing, the
   breadcrumb already says where you are.
@@ -705,7 +729,9 @@ Two details that look like polish but are not:
   targets check `relatedTarget` before clearing their highlight. Without it the indicator
   flickers over every tab and over the terminal.
 - A centre drop is not a split. Dropping a tab into the middle of a pane just focuses it.
-- Each pane carries a chip in its top-right corner - the host it is on, and the drag handle.
+- Each pane carries a chip in its top-right corner - the host's icon and name, the drag
+  handle, and a close button. The button sits beside the handle, not inside it: the handle
+  is a `role="button"` div, and a control nested in another is invalid.
   Panes are otherwise indistinguishable once a shell has painted over them.
 - `dragDropEnabled` is `false` in `tauri.conf.json`. It must stay that way: the webview's
   native file-drop handler otherwise swallows the HTML5 drag events.
@@ -749,6 +775,21 @@ Details worth keeping:
   healthy sessions.
 - The watchdog also covers a link lost while awake, on its fixed interval, which is why
   detection no longer depends on russh's keepalive at all.
+
+## A shell that exits closes its pane
+
+`exit`, logout or Ctrl-D closes the pane, and the tab once no pane is left. The `closed`
+event carries the shell's exit status, and only a status closes anything
+(`closeExitedSession`). A lost connection, a channel closed with no status, or a session
+ended from this side keeps its pane, because that is where Reconnect is.
+
+- **Any exit status closes, zero or not.** `exit` after a failed command exits non-zero,
+  and a pane that stayed open would look as though `exit` did nothing. The cost is that a
+  forced command's parting message - a git host's "no shell access" - closes with it.
+- **EOF alone does not end the pump.** OpenSSH sends the exit status before EOF; Dropbear
+  can send it after. Stopping at EOF lost the status there, so the pane never closed.
+- The session is detached before the pane closes, so `closePane` has nothing to
+  disconnect: the session is already over.
 
 ## Terminals outlive their components
 

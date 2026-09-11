@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createPane, listPanes, splitPane } from './layout'
-import { tabHostId, tabTitle, titleParts, UNTITLED } from './tab-title'
+import { tabColors, tabHostId, tabIsSplit, tabTitle, titleParts, UNTITLED } from './tab-title'
 
 const LABELS: Record<string, string> = {
   'host-1': 'terminal.shop',
@@ -90,5 +90,50 @@ describe('tabHostId', () => {
   it('has no host for a pane that has connected to nothing', () => {
     const pane = createPane(null)
     expect(tabHostId(pane, pane.id)).toBeNull()
+  })
+})
+
+describe('tabIsSplit', () => {
+  it('is false for one pane and true once the tab splits', () => {
+    const pane = createPane('host-1')
+    expect(tabIsSplit(pane)).toBe(false)
+
+    // Two panes on the same host still count: the tab is a group either way.
+    expect(tabIsSplit(splitPane(pane, pane.id, 'row', createPane('host-1')))).toBe(true)
+  })
+})
+
+describe('tabColors', () => {
+  const COLORS: Record<string, string> = { 'host-1': 'red', 'host-2': 'blue' }
+  const colorOf = (id: string) => COLORS[id] ?? null
+
+  it('is one colour for a tab on one host', () => {
+    expect(tabColors(createPane('host-1'), colorOf)).toEqual(['red'])
+  })
+
+  it('lists each colour once, in pane order', () => {
+    const first = createPane('host-2')
+    const withRed = splitPane(first, first.id, 'row', createPane('host-1'))
+    const tree = splitPane(withRed, first.id, 'row', createPane('host-2'))
+
+    expect(tabColors(tree, colorOf)).toEqual(['blue', 'red'])
+  })
+
+  it('keeps a host with no colour as a stop, so the tint cannot claim the whole tab', () => {
+    const first = createPane('host-1')
+    const tree = splitPane(first, first.id, 'row', createPane('host-3'))
+    expect(tabColors(tree, colorOf)).toEqual(['red', null])
+  })
+
+  it('is empty when no host in the tab has a colour', () => {
+    const first = createPane('host-3')
+    const tree = splitPane(first, first.id, 'row', createPane(null))
+    expect(tabColors(tree, colorOf)).toEqual([])
+  })
+
+  it('ignores panes with no host', () => {
+    const first = createPane(null)
+    const tree = splitPane(first, first.id, 'row', createPane('host-2'))
+    expect(tabColors(tree, colorOf)).toEqual(['blue'])
   })
 })

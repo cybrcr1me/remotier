@@ -183,6 +183,7 @@ async fn pump(
     let mut pending: Vec<u8> = Vec::with_capacity(FLUSH_BYTES);
     let mut flush_at: Option<tokio::time::Instant> = None;
     let mut exit_status = None;
+    let mut eof = false;
     let mut lost: Option<String> = None;
 
     loop {
@@ -224,8 +225,18 @@ async fn pump(
                             flush_at = Some(tokio::time::Instant::now() + FLUSH_INTERVAL);
                         }
                     }
-                    ChannelMsg::ExitStatus { exit_status: status } => exit_status = Some(status),
-                    ChannelMsg::Eof | ChannelMsg::Close => break,
+                    ChannelMsg::ExitStatus { exit_status: status } => {
+                        exit_status = Some(status);
+                        if eof {
+                            break;
+                        }
+                    }
+                    // EOF alone is not the end. OpenSSH sends the exit status first, but
+                    // Dropbear can send it after, and the status is what tells the UI the
+                    // shell exited - which closes the pane - rather than the channel closing.
+                    ChannelMsg::Eof if exit_status.is_some() => break,
+                    ChannelMsg::Eof => eof = true,
+                    ChannelMsg::Close => break,
                     _ => {}
                 }
             }

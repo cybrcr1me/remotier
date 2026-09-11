@@ -17,4 +17,4 @@ export const BAR_HEIGHT = 'h-11'
  * the header, which has to leave room for the macOS window buttons, while these hold only a
  * line of text or a row of small controls.
  */
-export const TOOLBAR_HEIGHT = 'h-9'
+export const TOOLBAR_HEIGHT = 'h-10'

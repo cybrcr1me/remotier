@@ -155,6 +155,15 @@ describe('pane lifetime', () => {
     const view = readFileSync(join(SRC, 'views/TerminalsView.vue'), 'utf8')
     expect(view).toMatch(/releaseMissing\(/)
   })
+
+  it('gives every connect attempt its own output channel', () => {
+    // A failed attempt drops the Rust end of its channel, and Tauri then unregisters the
+    // webview's handler. A retry after a PIN, password or host key prompt that reused the
+    // channel connected fine and showed a blank terminal: its output had no handler.
+    const attempt = pane.match(/connect: \(request\) => \{[\s\S]*?\n {6}\},/)?.[0] ?? ''
+    expect(attempt).toMatch(/new Channel/)
+    expect(pane.match(/new Channel/g)).toHaveLength(1)
+  })
 })
 
 describe('tab dragging', () => {

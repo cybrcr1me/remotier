@@ -16,13 +16,24 @@ import EntityIcon from './EntityIcon.vue'
 const icon = defineModel<string>('icon', { required: true })
 const color = defineModel<string>('color', { required: true })
 
-defineProps<{ showIcon?: boolean }>()
+/*
+ * Defaulted rather than left optional: Vue casts an absent boolean prop to `false`, not
+ * `undefined`, so an unset `showIcon` hid the icon field in both editors.
+ */
+withDefaults(defineProps<{ showIcon?: boolean }>(), { showIcon: true })
 
 const icons = useIconsStore()
 const { catalog } = storeToRefs(icons)
 
 /** The catalog icon currently chosen, or `null` when the icon is a built-in one. */
 const reference = computed(() => catalogReference(icon.value))
+
+/*
+ * How a chosen option looks: a lime outline. The `dark:` half is not redundant - the
+ * outline button carries `dark:border-input` and `dark:bg-input/30`, and with the root
+ * permanently `.dark` those beat plain classes, so the choice used to show no outline.
+ */
+const CHOSEN = 'border-primary bg-accent dark:border-primary dark:bg-accent'
 
 const open = ref(false)
 const query = ref('')
@@ -59,7 +70,7 @@ function choose(chosen: string) {
 </script>
 
 <template>
-  <Field v-if="showIcon !== false">
+  <Field v-if="showIcon">
     <FieldLabel>Icon</FieldLabel>
     <div class="flex flex-wrap gap-1">
       <Button
@@ -70,7 +81,7 @@ function choose(chosen: string) {
         size="icon"
         :aria-label="option.label"
         :aria-pressed="icon === option.key"
-        :class="cn('size-9', icon === option.key && 'border-ring bg-accent')"
+        :class="cn('size-9', icon === option.key && CHOSEN)"
         @click="icon = option.key"
       >
         <component :is="option.icon" />
@@ -86,7 +97,7 @@ function choose(chosen: string) {
             type="button"
             variant="outline"
             :aria-pressed="reference !== null"
-            :class="cn('h-9 max-w-48 font-normal', reference && 'border-ring bg-accent')"
+            :class="cn('h-9 max-w-48 font-normal', reference && CHOSEN)"
           >
             <EntityIcon v-if="reference" :icon="icon" class="size-4" />
             <SearchIcon v-else />
@@ -115,7 +126,7 @@ function choose(chosen: string) {
               :key="entry.reference"
               type="button"
               variant="ghost"
-              :class="cn('justify-start font-normal', reference === entry.reference && 'bg-accent')"
+              :class="cn('justify-start font-normal', reference === entry.reference && CHOSEN)"
               @click="choose(entry.reference)"
             >
               <EntityIcon :icon="catalogKey(entry.reference)" class="size-4 shrink-0" />
@@ -139,7 +150,7 @@ function choose(chosen: string) {
         size="icon"
         :aria-label="option.label"
         :aria-pressed="color === option.key"
-        :class="cn('size-9', color === option.key && 'border-ring')"
+        :class="cn('size-9', color === option.key && CHOSEN)"
         @click="color = option.key"
       >
         <span :class="cn('flex size-4 items-center justify-center rounded-full', colorSwatch(option.key))">
