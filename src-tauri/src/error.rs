@@ -44,6 +44,10 @@ pub enum Error {
     /// nothing this device can do on its own will make the token valid again.
     #[error("your sync session has expired - sign in again")]
     SyncUnauthorised,
+    /// Fetching an app icon or the catalog failed. Never fatal: the UI shows the built-in
+    /// icon instead.
+    #[error("icons: {0}")]
+    Icon(String),
     #[error("internal error: {0}")]
     Internal(String),
 }
@@ -116,6 +120,7 @@ impl Error {
             Error::PasswordRequired { .. } => "passwordRequired",
             Error::Sync(_) => "sync",
             Error::SyncUnauthorised => "syncUnauthorised",
+            Error::Icon(_) => "icon",
             Error::Internal(_) => "internal",
         }
     }

@@ -5,6 +5,13 @@ export type KeySource = 'managed' | 'system_path' | 'agent'
 /** `global` is the whole account and has an empty `scopeId`; there is only one. */
 export type VarScope = 'global' | 'group' | 'host'
 
+/** One icon in the selfh.st catalog. Mirrors `CatalogEntry` in `src-tauri/src/icons.rs`. */
+export interface CatalogIcon {
+  name: string
+  reference: string
+  tags: string[]
+}
+
 export interface Group {
   id: string
   parentId: string | null

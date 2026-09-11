@@ -16,6 +16,7 @@ import { navEntries } from '@/lib/nav'
 import { BAR_HEIGHT } from '@/lib/ui'
 import { cn } from '@/lib/utils'
 import { instanceLabel, summarise } from '@/lib/sync-status'
+import { settingsRoute } from '@/lib/settings-tabs'
 import { useSyncStore } from '@/stores/sync'
 import { computed } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
@@ -64,7 +65,13 @@ const label = computed(() =>
         <SidebarGroupContent>
           <SidebarMenu>
             <SidebarMenuItem v-for="entry in navEntries" :key="entry.to">
-              <SidebarMenuButton as-child :is-active="route.path.startsWith(entry.to)" :tooltip="entry.label">
+              <!-- The current page is marked in lime; the stock accent text barely differs from an idle item. -->
+              <SidebarMenuButton
+                as-child
+                :is-active="route.path.startsWith(entry.to)"
+                :tooltip="entry.label"
+                class="data-active:text-primary"
+              >
                 <RouterLink :to="entry.to">
                   <component :is="entry.icon" />
                   <span>{{ entry.label }}</span>
@@ -80,7 +87,7 @@ const label = computed(() =>
       <SidebarMenu>
         <SidebarMenuItem>
           <SidebarMenuButton as-child :tooltip="summarise(sync.status)" size="sm">
-            <RouterLink to="/settings">
+            <RouterLink :to="settingsRoute('sync')">
               <span class="size-1.5 shrink-0" :class="squareClass" />
               <span class="truncate font-mono text-xs">{{ label }}</span>
             </RouterLink>

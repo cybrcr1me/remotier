@@ -16,7 +16,8 @@ import {
   CommandList,
 } from '@/components/ui/command'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { colorSwatch, groupIcon, hasColor } from '@/lib/appearance'
+import { colorSwatch, hasColor } from '@/lib/appearance'
+import EntityIcon from './EntityIcon.vue'
 import { buildTree, descendantIds, flattenGroups } from '@/lib/tree'
 import type { Group } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -79,7 +80,7 @@ function choose(groupId: string | null) {
             :class="cn('size-2 shrink-0 rounded-full', colorSwatch(current.group.color))"
             aria-hidden="true"
           />
-          <component :is="groupIcon(current?.group.icon)" v-if="current" class="size-4 shrink-0" />
+          <EntityIcon v-if="current" :icon="current.group.icon" kind="group" class="size-4 shrink-0" />
           <span class="truncate">{{ current ? current.group.name : props.noneLabel }}</span>
         </span>
         <ChevronsUpDownIcon class="size-4 shrink-0 opacity-50" />
@@ -116,7 +117,7 @@ function choose(groupId: string | null) {
                   :class="cn('size-2 shrink-0 rounded-full', colorSwatch(option.group.color))"
                   aria-hidden="true"
                 />
-                <component :is="groupIcon(option.group.icon)" class="size-4 shrink-0" />
+                <EntityIcon :icon="option.group.icon" kind="group" class="size-4 shrink-0" />
                 <span class="truncate">{{ option.group.name }}</span>
               </span>
               <span v-if="option.path.length" class="ml-auto truncate pl-2 text-xs text-muted-foreground">

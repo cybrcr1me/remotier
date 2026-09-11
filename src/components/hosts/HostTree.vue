@@ -9,7 +9,8 @@ import {
 } from '@/components/ui/context-menu'
 import { cn } from '@/lib/utils'
 import type { TreeNode } from '@/lib/tree'
-import { colorBorder, groupIcon, hasColor, hostIcon } from '@/lib/appearance'
+import { colorBorder, hasColor } from '@/lib/appearance'
+import EntityIcon from './EntityIcon.vue'
 import { ChevronRightIcon } from '@lucide/vue'
 
 defineOptions({ name: 'HostTree' })
@@ -60,8 +61,9 @@ const depth = props.depth ?? 0
                   :class="cn('transition-transform', props.expanded.has(node.id) && 'rotate-90')"
                 />
               </Button>
-              <component
-                :is="groupIcon(node.group.icon)"
+              <EntityIcon
+                :icon="node.group.icon"
+                kind="group"
                 :class="cn(
                   'size-4 shrink-0 text-muted-foreground',
                   hasColor(node.group.color) && 'text-foreground',
@@ -77,7 +79,7 @@ const depth = props.depth ?? 0
 
             <template v-else>
               <span class="w-5 shrink-0" />
-              <component :is="hostIcon(node.host.icon)" class="size-4 shrink-0 text-muted-foreground" />
+              <EntityIcon :icon="node.host.icon" class="size-4 shrink-0 text-muted-foreground" />
               <span
                 :class="cn(
                   'truncate',

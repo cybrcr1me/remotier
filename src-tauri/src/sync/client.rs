@@ -208,7 +208,7 @@ async fn check(response: reqwest::Response) -> Result<reqwest::Response> {
 /// here without the feature that would pick aws-lc-rs. Installing ring explicitly is what
 /// makes TLS work at all; without it every request fails at handshake with an error that
 /// does not mention providers.
-fn install_crypto_provider() {
+pub(crate) fn install_crypto_provider() {
     use std::sync::Once;
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {

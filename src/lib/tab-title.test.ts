@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createPane, listPanes, splitPane } from './layout'
-import { tabColor, tabTitle, titleParts, UNTITLED } from './tab-title'
+import { tabHostId, tabTitle, titleParts, UNTITLED } from './tab-title'
 
 const LABELS: Record<string, string> = {
   'host-1': 'terminal.shop',
@@ -72,31 +72,23 @@ describe('tabTitle', () => {
   })
 })
 
-describe('tabColor', () => {
-  const COLORS: Record<string, string> = { 'host-1': 'red', 'host-2': 'blue' }
-  const colorOf = (id: string) => COLORS[id] ?? null
-
-  it('takes the colour of the active pane', () => {
+describe('tabHostId', () => {
+  it('takes the host of the active pane', () => {
     const first = createPane('host-1')
     const tree = splitPane(first, first.id, 'row', createPane('host-2'))
     const second = listPanes(tree)[1]
 
-    expect(tabColor(tree, first.id, colorOf)).toBe('red')
-    expect(tabColor(tree, second.id, colorOf)).toBe('blue')
+    expect(tabHostId(tree, first.id)).toBe('host-1')
+    expect(tabHostId(tree, second.id)).toBe('host-2')
   })
 
   it('falls back to the first pane when the active one is gone', () => {
     const pane = createPane('host-1')
-    expect(tabColor(pane, 'stale-pane-id', colorOf)).toBe('red')
+    expect(tabHostId(pane, 'stale-pane-id')).toBe('host-1')
   })
 
-  it('has no colour for a pane with no host', () => {
+  it('has no host for a pane that has connected to nothing', () => {
     const pane = createPane(null)
-    expect(tabColor(pane, pane.id, colorOf)).toBeNull()
-  })
-
-  it('has no colour when the host carries none', () => {
-    const pane = createPane('host-3')
-    expect(tabColor(pane, pane.id, colorOf)).toBeNull()
+    expect(tabHostId(pane, pane.id)).toBeNull()
   })
 })

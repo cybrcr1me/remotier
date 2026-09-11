@@ -9,13 +9,13 @@
 //! to the token directly removes the agent, `ssh-add`, and the platform differences with
 //! it - and lets the touch and PIN prompts be part of the app.
 //!
-//! The signature format is OpenSSH's, from PROTOCOL.u2f: the token is asked to sign the
-//! SHA-256 of the data SSH wants signed, and the result is wrapped with the authenticator
-//! flags and signature counter the verifier needs to reconstruct what was signed.
+//! The signature format is OpenSSH's, from PROTOCOL.u2f: the token signs with the SHA-256
+//! of the data SSH wants signed as its client data hash, and the result is wrapped with the
+//! authenticator flags and signature counter the verifier needs to reconstruct what was
+//! signed.
 
 use russh::keys::ssh_key::private::KeypairData;
 use russh::keys::ssh_key::{Algorithm, PrivateKey};
-use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
 use crate::error::{Error, Result};
@@ -134,11 +134,34 @@ pub fn append_signature(to_sign: &mut Vec<u8>, blob: &[u8]) {
     put_string(to_sign, blob);
 }
 
-/// What the token is asked to sign: the SHA-256 of SSH's own signature input.
+/// The assertion request for signing `data` with `key`.
 ///
-/// CTAP calls this the client data hash, and hashes it again inside the assertion.
-pub fn challenge(data: &[u8]) -> [u8; 32] {
-    Sha256::digest(data).into()
+/// `data` goes in **as it is**. The token has to sign with `sha256(data)` as its client
+/// data hash, because that is what sshd recomputes - and ctap-hid-fido2 derives the client
+/// data hash by hashing the challenge it is given. Handing it a hash made the token sign
+/// `sha256(sha256(data))`: a signature that verifies nowhere, which the server answers with
+/// an ordinary authentication failure.
+///
+/// Built by hand rather than through `get_assertion`, whose defaults ask for `uv: true` on
+/// every assertion. A token with no user verification configured answers that with
+/// CTAP2_ERR_INVALID_OPTION, so the convenience wrapper cannot sign an ordinary touch-only
+/// key at all. OpenSSH asks for verification only when the credential was enrolled with it;
+/// supplying a PIN conveys it instead, which is why `.pin()` clears the option itself.
+///
+/// Returns the builder because ctap-hid-fido2 does not export the type `build()` produces,
+/// so it cannot be named in a signature.
+fn assertion_request<'a>(
+    key: &SecurityKey,
+    data: &[u8],
+    pin: Option<&'a Zeroizing<String>>,
+) -> ctap_hid_fido2::fidokey::GetAssertionArgsBuilder<'a> {
+    let builder = ctap_hid_fido2::fidokey::GetAssertionArgsBuilder::new(&key.application, data)
+        .add_credential_id(&key.key_handle);
+
+    match pin {
+        Some(pin) => builder.pin(pin.as_str()),
+        None => builder.without_pin_and_uv(),
+    }
 }
 
 /// Ask the token to sign, returning the SSH signature blob.
@@ -170,20 +193,7 @@ pub fn sign(key: &SecurityKey, data: &[u8], pin: Option<&Zeroizing<String>>) -> 
     let device = ctap_hid_fido2::FidoKeyHidFactory::create(&ctap_hid_fido2::Cfg::init())
         .map_err(|e| Error::Ssh(format!("could not open the security key: {e}")))?;
 
-    // Built by hand rather than through `get_assertion`, whose defaults ask for `uv: true`
-    // on every assertion. A token with no user verification configured answers that with
-    // CTAP2_ERR_INVALID_OPTION, so the convenience wrapper cannot sign an ordinary
-    // touch-only key at all. OpenSSH asks for verification only when the credential was
-    // enrolled with it; supplying a PIN conveys it instead, which is why `.pin()` clears
-    // the option itself.
-    let challenge = challenge(data);
-    let builder = ctap_hid_fido2::fidokey::GetAssertionArgsBuilder::new(&key.application, &challenge)
-        .add_credential_id(&key.key_handle);
-
-    let builder = match pin {
-        Some(pin) => builder.pin(pin.as_str()),
-        None => builder.without_pin_and_uv(),
-    };
+    let args = assertion_request(key, data, pin).build();
 
     log::debug!(
         "security key: requesting assertion for {:?} ({} byte handle, pin: {})",
@@ -193,7 +203,7 @@ pub fn sign(key: &SecurityKey, data: &[u8], pin: Option<&Zeroizing<String>>) -> 
     );
 
     let assertions = device
-        .get_assertion_with_args(&builder.build())
+        .get_assertion_with_args(&args)
         .map_err(|e| classify(&e.to_string(), pin.is_some()))?;
 
     let assertion = assertions.first().ok_or_else(|| {
@@ -262,6 +272,9 @@ pub struct TokenSigner {
     pin: Option<Zeroizing<String>>,
     /// Kept so a failure can be reported precisely; russh only sees "signing failed".
     failure: Option<Error>,
+    /// Whether the token produced a signature, which tells a refused signature apart from a
+    /// key the server never accepted.
+    signed: bool,
 }
 
 impl TokenSigner {
@@ -270,7 +283,16 @@ impl TokenSigner {
             key,
             pin,
             failure: None,
+            signed: false,
         }
+    }
+
+    /// True once the token has signed.
+    ///
+    /// russh asks for a signature only after the server has accepted the key, so a
+    /// rejection that follows one is about the signature, not about `authorized_keys`.
+    pub fn signed(&self) -> bool {
+        self.signed
     }
 
     /// Why signing failed, if it did.
@@ -319,6 +341,7 @@ impl russh::Signer for TokenSigner {
 
         match signed {
             Ok(blob) => {
+                self.signed = true;
                 let mut request = to_sign;
                 append_signature(&mut request, &blob);
                 Ok(request)
@@ -419,19 +442,30 @@ mod tests {
     }
 
     #[test]
-    fn the_challenge_is_the_sha256_of_the_data() {
-        // Known answer: SHA-256 of "abc".
-        let expected =
-            hex_literal_ba7816bf();
-        assert_eq!(challenge(b"abc"), expected);
+    fn the_token_is_given_the_data_itself_not_its_hash() {
+        // ctap-hid-fido2 hashes the challenge into the client data hash. Hashing it here as
+        // well made every signature cover sha256(sha256(data)), which sshd cannot verify -
+        // so every security key login fell through to a password prompt.
+        let data = b"session id and userauth request";
+        let args = assertion_request(&key_with_flags(0x01), data, None).build();
+
+        assert_eq!(args.challenge, data);
+        assert_eq!(args.rpid, "ssh:");
+        assert_eq!(args.credential_ids, vec![vec![0u8; 48]]);
     }
 
-    fn hex_literal_ba7816bf() -> [u8; 32] {
-        [
-            0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea, 0x41, 0x41, 0x40, 0xde, 0x5d, 0xae,
-            0x22, 0x23, 0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c, 0xb4, 0x10, 0xff, 0x61,
-            0xf2, 0x00, 0x15, 0xad,
-        ]
+    #[test]
+    fn verification_comes_from_the_pin_and_is_never_demanded_as_an_option() {
+        // `uv: true` is refused outright by a token with no user verification configured.
+        let pin = Zeroizing::new("123456".to_string());
+        let with_pin = assertion_request(&key_with_flags(0x05), b"data", Some(&pin)).build();
+        assert_eq!(with_pin.pin, Some("123456"));
+        assert_eq!(with_pin.uv, None);
+
+        let touch_only = assertion_request(&key_with_flags(0x01), b"data", None).build();
+        assert_eq!(touch_only.pin, None);
+        assert_eq!(touch_only.uv, None);
+        assert!(touch_only.up);
     }
 
     #[test]

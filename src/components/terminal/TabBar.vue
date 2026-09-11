@@ -2,14 +2,15 @@
 import { Button } from '@/components/ui/button'
 import { insertionIndex, type Rect } from '@/lib/dnd'
 import { beginDrag, dragging, endDrag } from '@/lib/drag'
-import { colorBorder, hasColor } from '@/lib/appearance'
-import { tabColor, tabTitle } from '@/lib/tab-title'
-import { BAR_HEIGHT } from '@/lib/ui'
+import EntityIcon from '@/components/hosts/EntityIcon.vue'
+import { colorText, colorTint, hasColor } from '@/lib/appearance'
+import { tabHostId, tabTitle } from '@/lib/tab-title'
+import { TOOLBAR_HEIGHT } from '@/lib/ui'
 import { useInventoryStore } from '@/stores/inventory'
 import { cn } from '@/lib/utils'
 import { useSessionsStore } from '@/stores/sessions'
 import WorkspaceMenu from './WorkspaceMenu.vue'
-import { PlusIcon, XIcon } from '@lucide/vue'
+import { PlusIcon, TerminalIcon, XIcon } from '@lucide/vue'
 import { storeToRefs } from 'pinia'
 import { ref } from 'vue'
 
@@ -17,25 +18,38 @@ const sessions = useSessionsStore()
 const inventory = useInventoryStore()
 const { tabs, activeTabId } = storeToRefs(sessions)
 
+type TabLayout = Parameters<typeof tabTitle>[0]
+
 /*
  * Titles are derived from the panes a tab currently holds, not stored on the tab. Merging
  * two tabs would otherwise leave the survivor advertising only the drop target's host.
  */
-function titleOf(tab: { layout: Parameters<typeof tabTitle>[0], name: string }) {
+function titleOf(tab: { layout: TabLayout, name: string }) {
   return tabTitle(tab.layout, id => inventory.hostById.get(id)?.label ?? null, tab.name)
 }
 
+/** The host whose icon and colour the tab wears: its active pane's. */
+function hostOf(tab: { layout: TabLayout, activePaneId: string }) {
+  const id = tabHostId(tab.layout, tab.activePaneId)
+  return id ? inventory.hostById.get(id) ?? null : null
+}
+
+function iconColorOf(tab: { layout: TabLayout, activePaneId: string }) {
+  const color = hostOf(tab)?.color
+  return hasColor(color) ? colorText(color) : null
+}
+
 /*
- * Every tab carries a border whether or not its host has a colour, so a coloured tab does
- * not sit a pixel taller than its neighbours.
+ * The active tab is tinted in its host's colour, or in lime when the host has none. The
+ * others carry the colour on their icon only: enough to tell hosts apart, without every
+ * coloured tab looking selected.
  */
-function borderOf(tab: { layout: Parameters<typeof tabTitle>[0], activePaneId: string }) {
-  const color = tabColor(
-    tab.layout,
-    tab.activePaneId,
-    id => inventory.hostById.get(id)?.color ?? null,
-  )
-  return hasColor(color) ? colorBorder(color) : 'border-transparent'
+function stateOf(tab: { id: string, layout: TabLayout, activePaneId: string }) {
+  if (tab.id !== activeTabId.value) {
+    return 'border-transparent text-muted-foreground hover:bg-accent hover:text-foreground'
+  }
+  const color = hostOf(tab)?.color
+  return cn('text-foreground', hasColor(color) ? colorTint(color) : 'border-primary/30 bg-primary/10')
 }
 
 const emit = defineEmits<{ newTab: [] }>()
@@ -97,10 +111,10 @@ function onDrop(event: DragEvent) {
 </script>
 
 <template>
-  <div :class="cn('flex shrink-0 items-stretch gap-1 border-b px-2 py-1.5', BAR_HEIGHT)">
+  <div :class="cn('flex shrink-0 items-center gap-1 border-b px-1.5', TOOLBAR_HEIGHT)">
     <div
       ref="strip"
-      class="relative flex min-w-0 flex-1 items-stretch gap-1 overflow-x-auto"
+      class="relative flex min-w-0 flex-1 items-stretch gap-1 self-stretch overflow-x-auto py-1"
       @dragover="onDragOver"
       @dragleave="onDragLeave"
       @drop="onDrop"
@@ -110,13 +124,11 @@ function onDrop(event: DragEvent) {
         :key="tab.id"
         draggable="true"
         :class="cn(
-          // The close button's 16px icon sits in a 20px box, so an even `px-3` leaves it
-          // looking further from the edge than the title is from the other side.
-          'group relative flex min-w-32 max-w-52 shrink-0 cursor-default items-center gap-1.5 rounded-md border pl-3 pr-1.5 text-sm',
-          tab.id === activeTabId
-            ? 'bg-accent text-accent-foreground'
-            : 'text-muted-foreground hover:bg-accent/50',
-          borderOf(tab),
+          // Every tab has a border, transparent unless it is active, so the active tab is
+          // not a pixel larger than its neighbours. The close button's 12px glyph sits in a
+          // 20px box, so its side needs less padding than the icon's to look the same.
+          'group relative flex max-w-52 shrink-0 cursor-pointer items-center gap-1.5 rounded-md border pr-1 pl-2.5 text-xs',
+          stateOf(tab),
           dragging?.kind === 'tab' && dragging.tabId === tab.id && 'opacity-40',
         )"
         @click="sessions.focusTab(tab.id)"
@@ -139,21 +151,30 @@ function onDrop(event: DragEvent) {
           aria-hidden="true"
         />
 
+        <!-- A tab with no host yet shows a terminal, rather than a server it is not on. -->
+        <EntityIcon
+          v-if="hostOf(tab)"
+          :icon="hostOf(tab)?.icon"
+          :class="cn('size-3.5 shrink-0', iconColorOf(tab))"
+          aria-hidden="true"
+        />
+        <TerminalIcon v-else class="size-3.5 shrink-0" aria-hidden="true" />
+        <span class="truncate">{{ titleOf(tab) }}</span>
         <span
           v-if="sessions.hasUnread(tab.id)"
           class="size-1.5 shrink-0 rounded-full bg-primary"
           :aria-label="`${titleOf(tab)} has new output`"
           role="status"
         />
-        <span class="truncate">{{ titleOf(tab) }}</span>
+        <!-- Always shown: hidden until hover, it leaves an empty slot on every other tab. -->
         <Button
           variant="ghost"
           size="icon"
-          class="ml-auto size-5 opacity-0 group-hover:opacity-100"
+          class="size-5 text-muted-foreground"
           :aria-label="`Close ${titleOf(tab)}`"
           @click.stop="sessions.closeTab(tab.id)"
         >
-          <XIcon />
+          <XIcon class="size-3" />
         </Button>
       </div>
     </div>
@@ -161,7 +182,7 @@ function onDrop(event: DragEvent) {
     <Button
       variant="ghost"
       size="icon"
-      class="size-7 self-center"
+      class="size-7"
       aria-label="New tab"
       @click="emit('newTab')"
     >

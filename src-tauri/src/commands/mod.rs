@@ -1,5 +1,6 @@
 pub mod groups;
 pub mod hosts;
+pub mod icons;
 pub mod identities;
 pub mod keys;
 pub mod secrets;

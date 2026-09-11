@@ -69,21 +69,28 @@ describe('form inputs', () => {
 })
 
 describe('chrome bars', () => {
-  const BARS = [
-    'components/layout/ViewToolbar.vue',
-    'components/layout/AppHeader.vue',
-    'components/layout/AppSidebar.vue',
-    'components/terminal/TabBar.vue',
-  ]
+  /*
+   * Two rows, one constant each. The window header and the sidebar header must match, or
+   * the seam between the sidebar and the content is visibly crooked. The tab bar and the
+   * view toolbars sit in the same place beneath it and must match each other, or the
+   * content jumps when switching views.
+   */
+  const ROWS: Record<string, string[]> = {
+    BAR_HEIGHT: ['components/layout/AppHeader.vue', 'components/layout/AppSidebar.vue'],
+    TOOLBAR_HEIGHT: ['components/layout/ViewToolbar.vue', 'components/terminal/TabBar.vue'],
+  }
+  const BARS = Object.values(ROWS).flat()
 
-  it('every horizontal bar takes its height from the shared constant', () => {
-    const offenders = BARS.filter((file) => {
-      const source = readFileSync(join(SRC, file), 'utf8')
-      return !source.includes('BAR_HEIGHT')
+  it('every horizontal bar takes its height from its row constant', () => {
+    const offenders = Object.entries(ROWS).flatMap(([constant, files]) => {
+      // Whole word, so `TOOLBAR_HEIGHT` does not pass for `BAR_HEIGHT`.
+      const uses = new RegExp(`\\b${constant}\\b`)
+      return files
+        .filter(file => !uses.test(readFileSync(join(SRC, file), 'utf8')))
+        .map(file => `${file}: ${constant}`)
     })
 
-    // Mismatched heights make the seam between the sidebar and the content visibly
-    // crooked, and it is very easy to change one and forget the others.
+    // It is very easy to change one bar in a row and forget the other.
     expect(offenders).toEqual([])
   })
 

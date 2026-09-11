@@ -12,12 +12,25 @@ import { errorMessage, ipc } from '@/lib/ipc'
 import type { SettingKey } from '@/stores/settings'
 import type { VaultStatus } from '@/lib/types'
 import { useSettingsStore } from '@/stores/settings'
+import { settingsRoute, settingsTabFrom } from '@/lib/settings-tabs'
 import { TriangleAlertIcon } from '@lucide/vue'
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
 
 const settings = useSettingsStore()
 const vault = ref<VaultStatus | null>(null)
+
+const route = useRoute()
+const router = useRouter()
+
+/** Read from the route, not held here - see `lib/settings-tabs.ts` for why. */
+const tab = computed(() => settingsTabFrom(route.query.tab))
+
+function openTab(value: string | number) {
+  // Replace, not push: flicking between tabs is not somewhere to go back to.
+  router.replace(settingsRoute(settingsTabFrom(String(value))))
+}
 
 async function update(key: SettingKey, value: string) {
   try {
@@ -57,7 +70,7 @@ onMounted(async () => {
         </AlertDescription>
       </Alert>
 
-      <Tabs default-value="general" class="gap-4">
+      <Tabs :model-value="tab" class="gap-4" @update:model-value="openTab">
         <TabsList>
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="placeholders">Placeholders</TabsTrigger>

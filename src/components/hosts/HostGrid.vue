@@ -8,7 +8,8 @@ import {
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { colorBorder, groupIcon, hasColor, hostIcon } from '@/lib/appearance'
+import { colorBorder, hasColor } from '@/lib/appearance'
+import EntityIcon from './EntityIcon.vue'
 import { summarise, type FlatHost, type GroupNode } from '@/lib/tree'
 import { cn } from '@/lib/utils'
 import { ChevronRightIcon, PencilIcon, PlugZapIcon } from '@lucide/vue'
@@ -73,7 +74,7 @@ function contents(node: GroupNode): string {
                 hasColor(node.group.color) && colorBorder(node.group.color),
               )"
             >
-              <component :is="groupIcon(node.group.icon)" class="size-4" />
+              <EntityIcon :icon="node.group.icon" kind="group" class="size-4" />
             </span>
 
             <div class="flex min-w-0 flex-1 flex-col">
@@ -131,7 +132,7 @@ function contents(node: GroupNode): string {
                 hasColor(entry.host.color) && colorBorder(entry.host.color),
               )"
             >
-              <component :is="hostIcon(entry.host.icon)" class="size-4" />
+              <EntityIcon :icon="entry.host.icon" class="size-4" />
             </span>
 
             <div class="flex min-w-0 flex-1 flex-col">

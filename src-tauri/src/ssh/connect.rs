@@ -327,13 +327,24 @@ async fn authenticate_token_key(
         Err(e) => log::warn!("security key: authentication errored: {e}"),
     }
 
-    if result
-        .map_err(|e| Error::Auth(format!("security key authentication failed: {e}")))?
-        .success()
-    {
-        Ok(())
-    } else {
-        after_key_rejected(handle, target, "this security key").await
+    let outcome =
+        result.map_err(|e| Error::Auth(format!("security key authentication failed: {e}")))?;
+
+    match outcome {
+        AuthResult::Success => Ok(()),
+        // The server accepted the key, the token signed, and the server still said no with
+        // nothing further pending: a signature it could not verify, or verification that
+        // authorized_keys demands and the token did not give. Offering a password here is
+        // what hid a broken signature behind a password prompt.
+        AuthResult::Failure {
+            partial_success: false,
+            ..
+        } if signer.signed() => Err(Error::Auth(
+            "the server refused the security key's signature - its auth log says why".into(),
+        )),
+        AuthResult::Failure { .. } => {
+            after_key_rejected(handle, target, "this security key").await
+        }
     }
 }
 

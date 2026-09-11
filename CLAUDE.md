@@ -187,6 +187,18 @@ reads as "wrong key" rather than "needs a PIN". The key file's flags say so up f
 (`0x04`), so `sign` returns `PinRequired` without contacting the token at all - which is
 also a touch the user would otherwise waste.
 
+**The token is given the data, not its hash.** sshd verifies with `sha256(data)` as the
+client data hash, and ctap-hid-fido2 computes the client data hash by hashing whatever
+challenge it is handed. Hashing first made every signature cover `sha256(sha256(data))`,
+which verifies nowhere; the server answered with an ordinary auth failure and
+`after_key_rejected` turned it into a password prompt. `assertion_request` is pure so a test
+pins this.
+
+**A refused signature is reported, not turned into a password prompt.** russh asks the
+token to sign only after the server has accepted the key, so a failure after signing, with
+no partial success, is a signature or verification problem. `TokenSigner::signed` tells the
+two apart; only a key the server never accepted falls back to a password.
+
 **Do not use `get_assertion`.** Its args default to `uv: Some(true)`, demanding user
 verification on every assertion, which a token without it configured answers with
 `CTAP2_ERR_INVALID_OPTION` - so the convenience wrapper cannot sign an ordinary touch-only
@@ -590,6 +602,36 @@ bare `transition` already runs at 120ms on the design's curve.
 `--accent`: accent is the hover surface, one step off the canvas, and a translucent
 selection built from it is invisible on a near-black terminal.
 
+## App icons
+
+A host or group icon is an opaque key. A built-in one names a Lucide icon in
+`lib/appearance.ts`; `selfhst:<reference>` names an app icon from the selfh.st catalog -
+a Portainer or Proxmox logo. `EntityIcon.vue` renders either, and is the only thing that
+should.
+
+- **Only the key syncs.** Each device fetches the image itself, in
+  `src-tauri/src/icons.rs`, and caches it in the app's cache directory. The webview never
+  goes online: its CSP allows `data:` images, so Rust hands back a `data:` URL. A build
+  that predates the catalog does not know the prefix and shows its default icon.
+- **The reference is validated** to `[a-z0-9._-]`, starting with a letter or digit, before
+  it goes near a URL or a file name. Every reference in the catalog fits.
+- **SVG, then PNG, then WebP.** About one icon in six has no SVG. jsDelivr answers a missing
+  file with 403, not 404, so both mean "try the next format".
+- **A 200 that is not an image is refused**, or a captive portal's login page would be
+  cached as an icon for good.
+- **The index is refreshed weekly**, and a stale copy is served when the CDN cannot be
+  reached. `Error::Icon` exists because `From<reqwest::Error>` phrases every transport
+  failure as the sync server's.
+- **Search runs in the webview** (`lib/icon-catalog.ts`) and returns 24 results, after
+  typing pauses. Each result is an image fetched on first sight, so a short prefix must not
+  become hundreds of downloads. Fetching tells jsDelivr which icons were looked at - that
+  was accepted when choosing the catalog.
+- A catalog icon shows the built-in default until its image arrives, and when it cannot be
+  fetched, so it never renders as an empty box. `stores/icons.ts` remembers a failure for
+  the session rather than retrying on every render.
+- The image is `draggable="false"`. It sits inside draggable tabs, and an image drags
+  itself.
+
 ## Picking a group
 
 `GroupPicker.vue` is the one control for choosing a group - the host's group, and a group's
@@ -608,11 +650,13 @@ distinguish two groups called "Staging" under different parents.
 - The picker speaks `string | null`; the editors keep the `INHERIT` sentinel they use
   everywhere else and bridge with a computed.
 
-Tabs in the terminal view carry their host's colour as a border (`tabColor`). It comes from
-the **active pane's** host: a tab can hold several hosts with several colours, and the
-active pane is the one the tab would show if you clicked it, so the colour is a promise the
-tab can keep. Every tab has a border, transparent when there is no colour, so a coloured
-tab is not a pixel taller than its neighbours.
+Tabs in the terminal view take their icon and colour from one host (`tabHostId`): the
+**active pane's**. A tab can hold several hosts with several colours, and the active pane is
+the one the tab would show if you clicked it, so the colour is a promise the tab can keep.
+The active tab is tinted in that colour, or in lime when the host has none; the others carry
+the colour on their icon only. Every tab has a border, transparent unless active, so the
+active tab is not a pixel larger than its neighbours. The close button is always shown:
+hidden until hover, it left an empty slot on every other tab and made them look lopsided.
 
 ## The hosts grid is a folder browser
 

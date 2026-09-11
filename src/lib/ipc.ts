@@ -3,6 +3,7 @@
 import { Channel, invoke } from '@tauri-apps/api/core'
 import type {
   AgentKey,
+  CatalogIcon,
   ConfigHost,
   ConnectRequest,
   DeviceLayout,
@@ -69,6 +70,11 @@ export const ipc = {
   deleteKey: (id: string) => invoke<void>('delete_key', { id }),
 
   vaultStatus: () => invoke<VaultStatus>('vault_status'),
+
+  /** The selfh.st icon catalog, fetched by Rust and cached on disk. */
+  iconCatalog: () => invoke<CatalogIcon[]>('icon_catalog'),
+  /** A catalog icon as a `data:` URL, downloaded the first time and served from cache after. */
+  iconImage: (reference: string) => invoke<string>('icon_image', { reference }),
 
   resolveHost: (hostId: string) => invoke<TargetPreview>('resolve_host', { hostId }),
   /**

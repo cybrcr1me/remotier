@@ -49,19 +49,14 @@ export function tabTitle(node: LayoutNode, labelOf: LabelLookup, fallback = UNTI
 }
 
 /**
- * The colour key a tab should wear, or `null` for no colour.
+ * The host a tab stands for - whose icon and colour it wears - or `null` for none yet.
  *
  * Taken from the host of the tab's active pane rather than from whatever it holds: a tab
  * can carry several hosts with several colours, and mixing them produces either a lie or a
  * stripe. The active pane is the one the tab would show if you clicked it, which makes the
- * colour a promise the tab can keep.
+ * icon and colour a promise the tab can keep.
  */
-export function tabColor(
-  node: LayoutNode,
-  activePaneId: string,
-  colorOf: (hostId: string) => string | null,
-): string | null {
+export function tabHostId(node: LayoutNode, activePaneId: string): string | null {
   const pane = findPane(node, activePaneId) ?? listPanes(node)[0] ?? null
-  if (!pane?.hostId) return null
-  return colorOf(pane.hostId)
+  return pane?.hostId ?? null
 }

@@ -2,6 +2,7 @@ pub mod commands;
 pub mod crypto;
 pub mod db;
 pub mod error;
+pub mod icons;
 pub mod ssh;
 pub mod state;
 pub mod sync;
@@ -66,6 +67,8 @@ pub fn run() {
             commands::hosts::update_host,
             commands::hosts::delete_host,
             commands::hosts::move_hosts,
+            commands::icons::icon_catalog,
+            commands::icons::icon_image,
             commands::identities::list_identities,
             commands::identities::create_identity,
             commands::identities::update_identity,
