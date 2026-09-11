@@ -5,7 +5,6 @@ import { beginDrag, dragging, endDrag } from '@/lib/drag'
 import EntityIcon from '@/components/hosts/EntityIcon.vue'
 import { colorText, colorTint, hasColor, tintGradient } from '@/lib/appearance'
 import { tabColors, tabHostId, tabIsSplit, tabTitle } from '@/lib/tab-title'
-import { TOOLBAR_HEIGHT } from '@/lib/ui'
 import { useInventoryStore } from '@/stores/inventory'
 import { cn } from '@/lib/utils'
 import { useSessionsStore } from '@/stores/sessions'
@@ -129,10 +128,17 @@ function onDrop(event: DragEvent) {
 </script>
 
 <template>
-  <div :class="cn('flex shrink-0 items-center gap-1 border-b px-1.5', TOOLBAR_HEIGHT)">
+  <!--
+    Rendered into the window header by `TerminalsView`, so it has no height or border of its
+    own. The bar and its strip carry the drag region: the tabs now cover the header that had
+    it, and the attribute does not reach an element laid over it. The tabs themselves do
+    not, which is what keeps dragging a tab from dragging the window.
+  -->
+  <div data-tauri-drag-region class="flex min-w-0 flex-1 items-center gap-1 self-stretch">
     <div
       ref="strip"
-      class="relative flex min-w-0 flex-1 items-stretch gap-1 self-stretch overflow-x-auto py-1"
+      data-tauri-drag-region
+      class="relative flex min-w-0 flex-1 items-stretch gap-1 self-stretch overflow-x-auto py-1.5"
       @dragover="onDragOver"
       @dragleave="onDragLeave"
       @drop="onDrop"

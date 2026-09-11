@@ -71,13 +71,13 @@ describe('form inputs', () => {
 describe('chrome bars', () => {
   /*
    * Two rows, one constant each. The window header and the sidebar header must match, or
-   * the seam between the sidebar and the content is visibly crooked. The tab bar and the
-   * view toolbars sit in the same place beneath it and must match each other, or the
-   * content jumps when switching views.
+   * the seam between the sidebar and the content is visibly crooked. The view toolbars sit
+   * beneath the header and share a height of their own. The terminal tabs are not a bar:
+   * they live in the header, which the test below holds them to.
    */
   const ROWS: Record<string, string[]> = {
     BAR_HEIGHT: ['components/layout/AppHeader.vue', 'components/layout/AppSidebar.vue'],
-    TOOLBAR_HEIGHT: ['components/layout/ViewToolbar.vue', 'components/terminal/TabBar.vue'],
+    TOOLBAR_HEIGHT: ['components/layout/ViewToolbar.vue'],
   }
   const BARS = Object.values(ROWS).flat()
 
@@ -92,6 +92,20 @@ describe('chrome bars', () => {
 
     // It is very easy to change one bar in a row and forget the other.
     expect(offenders).toEqual([])
+  })
+
+  it('puts the terminal tabs in the window header, which stays draggable around them', () => {
+    // A tab bar under a header holding nothing but the sidebar toggle cost every terminal a
+    // row of height. The header's drag region does not reach what is laid over it, so the
+    // slot and the tab bar's own empty space have to carry it, or the window stops dragging.
+    const header = readFileSync(join(SRC, 'components/layout/AppHeader.vue'), 'utf8')
+    const view = readFileSync(join(SRC, 'views/TerminalsView.vue'), 'utf8')
+    const tabBar = readFileSync(join(SRC, 'components/terminal/TabBar.vue'), 'utf8')
+
+    expect(header).toMatch(/:id="HEADER_SLOT_ID" data-tauri-drag-region/)
+    expect(view).toMatch(/<Teleport[^>]*:to="HEADER_SLOT"/)
+    expect(tabBar).toMatch(/<div data-tauri-drag-region class="flex min-w-0 flex-1/)
+    expect(tabBar).not.toMatch(/TOOLBAR_HEIGHT|BAR_HEIGHT/)
   })
 
   it('no bar hardcodes a height alongside the shared constant', () => {

@@ -703,6 +703,20 @@ path as group ids; `lib/tree.ts` does the walking (`nodesAt`, `breadcrumb`, `sum
 - The path line on a host card only appears for search results. While browsing, the
   breadcrumb already says where you are.
 
+## The tabs live in the window header
+
+`TerminalsView` teleports its `TabBar` into `HEADER_SLOT`, a slot in `AppHeader` beside
+the sidebar toggle. That row held nothing else, and a tab bar beneath it cost every
+terminal a row of height. The view still owns the bar: it unmounts on navigation, and the
+tabs go with it, so no other view shows them. The view toolbars elsewhere keep their own
+row under the header.
+
+The header is the window's drag region, and the slot and the tab bar now cover it. The
+attribute on the header does not reach an element laid over it, so the slot, the bar and
+its strip carry `data-tauri-drag-region` too - without it the window cannot be dragged by
+its title bar at all. Tabs do not carry it, which keeps dragging a tab from dragging the
+window. `ui-conventions.test.ts` checks both.
+
 ## Dragging tabs and panes
 
 Tabs reorder by dragging within the bar, and dropping a tab (or a pane, by its grip in the

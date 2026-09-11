@@ -32,6 +32,7 @@ import type { DropZone } from '@/lib/dnd'
 import { dragging, endDrag } from '@/lib/drag'
 import { markLost, releaseMissing } from '@/lib/terminal-registry'
 import { useTerminalShortcuts } from '@/lib/shortcuts'
+import { HEADER_SLOT } from '@/lib/ui'
 import type { SessionEvent } from '@/lib/types'
 import { useInventoryStore } from '@/stores/inventory'
 import { useSessionsStore } from '@/stores/sessions'
@@ -214,7 +215,15 @@ onBeforeUnmount(() => unlisten?.())
 
 <template>
   <div class="flex h-full min-h-0 flex-col">
-    <TabBar @new-tab="newTab" />
+    <!--
+      The tabs sit in the window header rather than in a bar of their own: that row held
+      nothing but the sidebar toggle, and a second bar cost every terminal a row of height.
+      Teleported rather than rendered by the header, so this view still owns them - it
+      unmounts on navigation, and the tabs go with it.
+    -->
+    <Teleport defer :to="HEADER_SLOT">
+      <TabBar @new-tab="newTab" />
+    </Teleport>
 
     <!--
       Every tab stays mounted and is merely hidden. Tearing one down would dispose its
