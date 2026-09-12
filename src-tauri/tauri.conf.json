@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Remotier",
-  "version": "0.1.0-beta2",
+  "version": "0.1.1-beta3",
   "identifier": "app.remotier.app",
   "build": {
     "frontendDist": "../dist",
