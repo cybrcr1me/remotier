@@ -201,16 +201,22 @@ if [ "$updater" = 1 ]; then
   # hold the notarised bundle rather than whichever state the bundler happened to tar.
   tar -czf "$archive" -C "$out/macos" Remotier.app
 
-  # `tauri build` takes either a path or the key itself in TAURI_SIGNING_PRIVATE_KEY;
-  # `signer sign` has a separate flag for each and prompts when given neither, which in a
-  # script is a hang rather than an error. Both forms are passed explicitly, password
-  # included, so it never asks.
-  key_args=(-k "$TAURI_SIGNING_PRIVATE_KEY")
+  # `tauri build` accepts either a path or the key itself in TAURI_SIGNING_PRIVATE_KEY.
+  # `signer sign` does not: it has one flag for each - `-f` and `-k` - and refuses both at
+  # once, counting a value that arrived from the environment as one of them. So a `.env`
+  # holding a path plus an explicit `-f` is a conflict, not a repetition.
+  #
+  # The password is always passed, because with none the CLI prompts, which in a script
+  # is a hang rather than an error.
   if [ -f "$TAURI_SIGNING_PRIVATE_KEY" ]; then
-    key_args=(-f "$TAURI_SIGNING_PRIVATE_KEY")
+    # A path: clear the variable the CLI would read as the key itself.
+    env -u TAURI_SIGNING_PRIVATE_KEY bun run tauri signer sign \
+      -f "$TAURI_SIGNING_PRIVATE_KEY" \
+      -p "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" "$archive" >/dev/null
+  else
+    # Already the key's contents, as a CI secret supplies it - left to the environment.
+    bun run tauri signer sign -p "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" "$archive" >/dev/null
   fi
-  bun run tauri signer sign \
-    "${key_args[@]}" -p "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" "$archive" >/dev/null
   if [ ! -f "$archive.sig" ]; then
     echo "tauri signer sign produced no $archive.sig" >&2
     exit 1

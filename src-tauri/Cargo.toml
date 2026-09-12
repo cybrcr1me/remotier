@@ -1,6 +1,6 @@
 [package]
 name = "remotier"
-version = "0.1.2-beta4"
+version = "0.1.3-beta5"
 description = "Local-first SSH client"
 authors = ["Eric Jaquome", "Lucas Regh"]
 license = "copyright"

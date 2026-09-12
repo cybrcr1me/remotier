@@ -9,8 +9,18 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 conf="$root/src-tauri/tauri.conf.json"
 
-pubkey=$(node -p "(require('$conf').plugins?.updater?.pubkey ?? '')")
-endpoint=$(node -p "(require('$conf').plugins?.updater?.endpoints?.[0] ?? '')")
+# Read on stdin rather than handing node a path. This runs on the Windows runner too,
+# where the shell is Git Bash and `$conf` is an MSYS path (/d/a/...) that a native node
+# cannot resolve - `require` then fails with MODULE_NOT_FOUND naming a file that is
+# plainly there.
+conf_field() {
+  node -e 'const conf = JSON.parse(require("fs").readFileSync(0, "utf8"));
+           const value = process.argv[1].split(".").reduce((at, key) => at?.[key], conf);
+           process.stdout.write(String(value ?? ""))' "$1" < "$conf"
+}
+
+pubkey=$(conf_field plugins.updater.pubkey)
+endpoint=$(conf_field plugins.updater.endpoints.0)
 
 if [ -z "$pubkey" ]; then
   cat >&2 <<'MSG'

@@ -1,7 +1,7 @@
 {
   "name": "remotier",
   "private": true,
-  "version": "0.1.2-beta4",
+  "version": "0.1.3-beta5",
   "type": "module",
   "packageManager": "bun@1.4.0",
   "scripts": {
