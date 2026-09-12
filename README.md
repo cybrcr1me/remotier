@@ -1,39 +1,53 @@
+<div align="center">
+
+<img src="design/mark.svg" width="88" alt="">
+
 # Remotier
 
-A local-first SSH client. Hosts and groups with inherited defaults, a key repository that
-does not force you to import anything, and tabbed terminals with split panes.
+**A local-first SSH client.**
+Hosts and groups with inherited defaults, keys that stay where you put them,
+and tabbed terminals with split panes.
 
-Built with Tauri 2, Vue 3 and russh.
+<img src="https://img.shields.io/badge/Tauri-2-D9FF00?style=flat-square&labelColor=0F110F" alt="Tauri 2">
+<img src="https://img.shields.io/badge/Vue-3-D9FF00?style=flat-square&labelColor=0F110F" alt="Vue 3">
+<img src="https://img.shields.io/badge/Rust-russh-D9FF00?style=flat-square&labelColor=0F110F" alt="Rust">
+<img src="https://img.shields.io/badge/macOS_·_Windows_·_Linux-0F110F?style=flat-square" alt="macOS, Windows, Linux">
 
-## Why
+</div>
 
-Termius grew heavy and moved most of the SSH workflow behind a subscription. Remotier
-keeps the parts that matter for day-to-day work and stores everything on your machine.
+## Download
+
+| macOS | Windows | Linux |
+| --- | --- | --- |
+| [Remotier.dmg][dmg] | [Remotier-setup.exe][exe] | [AppImage][appimage] · [.deb][deb] |
+
+macOS builds are signed and notarised, and the app updates itself from these releases.
+Windows is not yet signed, so SmartScreen warns until the binary earns reputation.
 
 ## Features
 
 - **Hosts and groups** — nested groups where port, identity and jump host are inherited.
   A field left blank on a host follows the group chain.
-- **Placeholders** — a shared group can define its username as `{{wg_user}}`, and each
-  person fills in their own value. The declarations are shared; the values never leave
-  your machine. Useful for bastions such as Warpgate.
-- **Keys, without a walled garden** — generate or import keys into an encrypted vault, or
-  point at the keys already in `~/.ssh` and leave them where they are. ssh-agent works too.
+- **Placeholders** — a shared group can set its username to `{{wg_user}}` and each person
+  fills in their own value. Declarations are shared; the values never leave your machine.
+- **Keys, without a walled garden** — generate or import into an encrypted vault, or point
+  at what is already in `~/.ssh` and leave it there. ssh-agent and FIDO keys work too.
 - **Terminals** — tabs and nested splits over xterm.js, saved as workspaces and restored
   on launch.
-- **Shares your OpenSSH setup** — verifies against your real `~/.ssh/known_hosts`, and can
-  import hosts from `~/.ssh/config`.
+- **Optional sync** — end-to-end encrypted, on your own server or ours. Groups can be
+  shared with colleagues. Keys and passwords are never uploaded, by construction.
+- **Your OpenSSH setup** — verifies against your real `known_hosts`, imports from
+  `~/.ssh/config`.
 
 ## Security
 
-Passwords, key passphrases and imported private keys are encrypted with
-XChaCha20-Poly1305 under a key held in the OS keychain, so the database on its own is
-useless. A host key that has *changed* is refused outright rather than offered as a
-prompt.
+Passwords, passphrases and imported private keys are sealed with XChaCha20-Poly1305 under
+a key in the OS keychain, so the database alone is useless. A host key that has *changed*
+is refused outright — no prompt, no override.
 
 ## Development
 
-Requires [Bun](https://bun.sh) and a [Rust](https://rustup.rs) toolchain.
+Needs [Bun](https://bun.sh) and a [Rust](https://rustup.rs) toolchain.
 
 ```bash
 bun install
@@ -47,16 +61,17 @@ bun run tauri dev
 | `cargo test --manifest-path src-tauri/Cargo.toml` | Rust tests |
 | `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets` | Lints |
 
-Live SSH tests need a real server and are `#[ignore]`d by default; see `CLAUDE.md`.
-
-Debug builds use a separate database and key store from release builds, so experiments
-never touch your real hosts.
-
-## Releasing
-
-See [docs/RELEASING.md](docs/RELEASING.md).
+Debug builds use a separate database and key store, so experiments never touch real hosts.
+Architecture notes live in [CLAUDE.md](CLAUDE.md), releasing in
+[docs/RELEASING.md](docs/RELEASING.md).
 
 ## Status
 
-MVP. SFTP, port forwarding, snippets and cloud sync are not implemented. Builds are not
-yet code signed, so macOS and Windows will warn on first launch.
+Beta. SFTP, port forwarding and snippets are not implemented yet.
+
+© 2026 Eric Jaquome, Lucas Regh. All rights reserved — see [LICENSE](LICENSE).
+
+[dmg]: https://github.com/cybrcr1me/remotier/releases/latest/download/Remotier.dmg
+[exe]: https://github.com/cybrcr1me/remotier/releases/latest/download/Remotier-setup.exe
+[appimage]: https://github.com/cybrcr1me/remotier/releases/latest/download/Remotier.AppImage
+[deb]: https://github.com/cybrcr1me/remotier/releases/latest/download/Remotier.deb

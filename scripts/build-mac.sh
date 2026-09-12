@@ -199,7 +199,22 @@ if [ "$updater" = 1 ]; then
   # Packed here rather than taken from the bundler, and packed *after* stapling: the
   # updater replaces the installed app with whatever is inside this tarball, so it has to
   # hold the notarised bundle rather than whichever state the bundler happened to tar.
-  tar -czf "$archive" -C "$out/macos" Remotier.app
+  # COPYFILE_DISABLE, or macOS tar stores every file's extended attributes as an
+  # AppleDouble `._name` companion entry. bsdtar hides those when listing and reassembles
+  # them on extract, so the archive looks clean from here - but the updater unpacks with
+  # Rust's tar crate, which sees them as ordinary files and stops at `._Remotier.app`.
+  # Nothing is lost: the signature lives in _CodeSignature and the binary, the
+  # notarisation ticket in the bundle, and the checks below re-prove both.
+  COPYFILE_DISABLE=1 tar -czf "$archive" -C "$out/macos" Remotier.app
+
+  # Counted rather than matched with `grep -q`: under `pipefail` a grep that exits at its
+  # first hit kills gzip with SIGPIPE, and the pipeline then reports failure on the very
+  # archives this is meant to catch.
+  appledouble=$(gzip -dc "$archive" | grep -a -c '\._Remotier\.app' || true)
+  if [ "$appledouble" != "0" ]; then
+    echo "the archive carries AppleDouble metadata, which the updater cannot unpack" >&2
+    exit 1
+  fi
 
   # `tauri build` accepts either a path or the key itself in TAURI_SIGNING_PRIVATE_KEY.
   # `signer sign` does not: it has one flag for each - `-f` and `-k` - and refuses both at
