@@ -22,6 +22,17 @@ if [ "$pkg" != "$conf" ] || [ "$pkg" != "$cargo" ]; then
   exit 1
 fi
 
+# The `v` belongs to the tag and nowhere else. Caught here because the comparison below
+# strips it from the tag, so a manifest carrying one reports "the tag does not match"
+# with both sides printing the same string - which reads as the check being broken.
+# Cargo and Tauri both refuse a non-semver version anyway, several minutes later.
+case "$pkg" in
+  v*)
+    echo "the manifests say '$pkg': drop the leading v, the tag carries it" >&2
+    exit 1
+    ;;
+esac
+
 if [ $# -gt 0 ]; then
   tag="$1"
   printf 'tag               %s\n' "$tag"
