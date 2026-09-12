@@ -45,8 +45,11 @@ jobs:
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
+          # libudev-dev is for hidapi, which ctap-hid-fido2 builds to talk to a security
+          # key - a dependency of the crate graph rather than of Tauri, which is why it
+          # is in no Tauri setup snippet.
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
-            librsvg2-dev patchelf libgtk-3-dev
+            librsvg2-dev patchelf libgtk-3-dev libudev-dev
 
       - uses: dtolnay/rust-toolchain@stable
 

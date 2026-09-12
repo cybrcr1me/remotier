@@ -94,6 +94,18 @@ affect the `.app`.
 `bun run tauri build` from the repository root. Running it from `src-tauri/` fails: the
 `beforeBuildCommand` needs the `package.json` that lives at the root.
 
+On Debian/Ubuntu the build needs, on top of Tauri's own list:
+
+```bash
+sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev \
+  patchelf libgtk-3-dev libudev-dev
+```
+
+`libudev-dev` is the one no Tauri guide mentions: `hidapi` links it, and `hidapi` is there
+because `ctap-hid-fido2` talks to security keys. Without it the build fails deep in a
+build script with "Unable to find libudev", naming neither Remotier nor the feature that
+pulled it in. The `.deb` declares the runtime half (`libudev1`) for the same reason.
+
 To skip bundling entirely while checking that the release profile compiles:
 
 ```bash

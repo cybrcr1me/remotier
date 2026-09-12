@@ -167,6 +167,12 @@ auth, because a stored key can turn out to be token-backed.
 only C dependency is `hidapi`, which vendors its source and builds with `cc` - no CMake, no
 NASM, no OpenSSL, which is the same constraint that chose `ring` over `aws-lc-rs`.
 
+On **Linux** it does need `libudev-dev` at build time and `libudev1` at run time, which is
+why every Linux CI job installs it and the `.deb` declares it. No Tauri setup snippet
+lists it - it comes from this crate graph, not from Tauri - and the build fails inside
+hidapi's build script with "Unable to find libudev", naming neither this app nor security
+keys.
+
 The signature format is OpenSSH's PROTOCOL.u2f: `string alg`, `string sig`, `byte flags`,
 `uint32 counter`. Two details are load-bearing and both are tested:
 
