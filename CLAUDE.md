@@ -530,7 +530,15 @@ release itself. An unverified notarised build fails on the user's machine and no
 else. `scripts/check-version.sh` takes the tag as an optional argument, which is how the
 workflow fails a mismatched tag in seconds rather than after an hour of build time.
 
-Two rules in that script are load-bearing:
+Notarisation is the other half of shipping a Mac build, and the script front-loads what
+Apple would otherwise refuse: it checks the signature carries the **hardened runtime**
+flag before submitting, because that rejection arrives ten minutes later in a log file.
+`entitlements.plist` must never gain `get-task-allow` for the same reason. Tauri staples
+the `.app`; the script submits and staples the **DMG** as well, since that is what people
+download, and a ticket that is issued but not stapled fails only on a machine that is
+offline - the worst place to find out.
+
+Two more rules in that script are load-bearing:
 
 - **It uploads into the release CI made; it never creates one.** `gh release create` here
   would produce a second, Mac-only release under the same tag the moment the workflow

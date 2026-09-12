@@ -66,6 +66,35 @@ verifies what it made before telling you it worked:
 Then it uploads the DMG to the release for `v<version>` with `gh release upload
 --clobber`, so a rebuild replaces the asset instead of failing on the name.
 
+### Notarisation, and why the checks are what they are
+
+Signing proves who built it. **Notarisation** is Apple scanning the binary and issuing a
+ticket saying it passed — without one, macOS refuses to open the app on any machine but
+yours, no matter how correctly it is signed.
+
+Four things have to hold, and the script fails on each rather than letting Apple reject
+the upload ten minutes later:
+
+- **Hardened runtime.** Notarisation refuses a bundle without it. Tauri signs with it on;
+  the script checks the `runtime` flag is actually in the signature.
+- **Entitlements with no debug keys.** `src-tauri/entitlements.plist` grants the network
+  client and user-selected file access the app needs under the hardened runtime.
+  `get-task-allow` would fail the submission — do not add it.
+- **A secure timestamp**, which `codesign` adds automatically.
+- **A stapled ticket.** Issued is not enough: stapling writes it into the artifact, which
+  is what lets Gatekeeper clear the app on a machine that is offline or behind a captive
+  portal. Tauri staples the `.app`; the script submits and staples the **DMG** too, since
+  that is the file people actually download.
+
+It ends by asking `spctl` — Gatekeeper's own verdict — rather than trusting that the
+earlier steps succeeded.
+
+`APPLE_PASSWORD` is an **app-specific password** from appleid.apple.com, not the Apple ID
+password, and `APPLE_TEAM_ID` is the 10-character code in the parentheses of your signing
+identity. Notarisation takes a few minutes; `notarytool --wait` blocks until Apple
+answers, and prints a submission id you can pass to `xcrun notarytool log <id>` if it is
+rejected.
+
 It will not *create* a release: the tag's CI run does that, and a release created here
 would become a second, Mac-only one under the same tag as soon as CI caught up. If the
 draft is not there yet, the script says so and prints the upload command to run later.

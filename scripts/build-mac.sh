@@ -124,10 +124,47 @@ echo
 echo "Verifying the signature"
 codesign --verify --deep --strict --verbose=2 "$app"
 
+# Notarisation rejects anything not built with the hardened runtime, and says so in a
+# log file rather than on the terminal. Checking the flag here turns a ten-minute round
+# trip to Apple into an immediate failure.
+#
+# The output is captured rather than piped into `grep -q`: under `pipefail` that pipeline
+# reports failure even when it matches, because grep exits at the first hit and codesign
+# then dies of SIGPIPE mid-write. It reads as "no hardened runtime" on a bundle that has
+# it, which is the least helpful way for a guard to be wrong.
+signature=$(codesign --display --verbose=2 "$app" 2>&1)
+case "$signature" in
+  *flags=*runtime*) ;;
+  *)
+    echo "the bundle is signed without the hardened runtime, which notarisation refuses" >&2
+    exit 1
+    ;;
+esac
+
 if [ "$notarise" = 1 ]; then
-  # Only meaningful once the ticket is stapled; a notarised build that fails here would
-  # warn on the user's machine and nowhere else, which is the worst place to find out.
+  # The ticket has to be *stapled*, not merely issued: a stapled bundle passes Gatekeeper
+  # on a machine that is offline or behind a captive portal, and an unstapled one fails
+  # there and nowhere else - the worst place to find out.
+  #
+  # Tauri notarises and staples the .app. The DMG around it is a separate artifact and is
+  # what people download, so it gets its own submission when it does not already carry a
+  # ticket.
+  if ! xcrun stapler validate "$dmg" >/dev/null 2>&1; then
+    echo
+    echo "Notarising the DMG (this waits on Apple, usually a few minutes)"
+    xcrun notarytool submit "$dmg" \
+      --apple-id "$APPLE_ID" \
+      --password "$APPLE_PASSWORD" \
+      --team-id "$APPLE_TEAM_ID" \
+      --wait
+    xcrun stapler staple "$dmg"
+  fi
+
+  echo
+  echo "Verifying what a user's machine will check"
+  # `spctl` is Gatekeeper's own answer, which is the only verdict that matters.
   spctl --assess --type execute --verbose=2 "$app"
+  xcrun stapler validate "$app"
   xcrun stapler validate "$dmg"
 fi
 
