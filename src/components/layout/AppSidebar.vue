@@ -53,7 +53,12 @@ const label = computed(() =>
       data-tauri-drag-region
       :class="cn('shrink-0 justify-center border-b p-0', BAR_HEIGHT)"
     >
-      <div class="flex items-center gap-2 pl-20 pr-2 group-data-[collapsible=icon]:hidden">
+      <!--
+        `pointer-events-none`, so the mark and the wordmark are not what a mousedown lands
+        on: the drag region above applies to that element alone, and anything laid over it
+        makes its own patch of the title bar undraggable.
+      -->
+      <div class="pointer-events-none flex items-center gap-2 pl-20 pr-2 group-data-[collapsible=icon]:hidden">
         <BrandMark class="size-4 shrink-0" />
         <!-- Wordmark: Martian Mono 700, uppercase, tracking -3.5%. Set nowhere else. -->
         <span class="truncate font-display text-sm font-bold uppercase tracking-wordmark">Remotier</span>

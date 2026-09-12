@@ -18,6 +18,7 @@ import type {
   KeyMetaInput,
   Share,
   SshKey,
+  SyncHistoryEntry,
   SyncStatus,
   VarDef,
   VarDefInput,
@@ -119,6 +120,9 @@ export const ipc = {
     invoke<SyncStatus>('sync_recover', { url, email, recoveryCode, deviceName }),
   syncLogout: () => invoke<SyncStatus>('sync_logout'),
   syncNow: () => invoke<SyncStatus>('sync_now'),
+
+  /** What the last cycles sent and received, newest first. Capped in the database. */
+  syncHistory: (limit?: number) => invoke<SyncHistoryEntry[]>('sync_history', { limit }),
 
   /** Machines with a saved layout, this one excluded. */
   syncDevices: () => invoke<DeviceLayout[]>('sync_devices'),

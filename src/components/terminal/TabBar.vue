@@ -4,6 +4,7 @@ import { insertionIndex, type Rect } from '@/lib/dnd'
 import { beginDrag, dragging, endDrag } from '@/lib/drag'
 import EntityIcon from '@/components/hosts/EntityIcon.vue'
 import { colorText, colorTint, hasColor, tintGradient } from '@/lib/appearance'
+import { openQuickConnect } from '@/lib/quick-connect'
 import { tabColors, tabHostId, tabIsSplit, tabTitle } from '@/lib/tab-title'
 import { useInventoryStore } from '@/stores/inventory'
 import { cn } from '@/lib/utils'
@@ -12,6 +13,7 @@ import WorkspaceMenu from './WorkspaceMenu.vue'
 import { Columns2Icon, PlusIcon, TerminalIcon, XIcon } from '@lucide/vue'
 import { storeToRefs } from 'pinia'
 import { ref } from 'vue'
+import { useRouter } from 'vue-router'
 
 const sessions = useSessionsStore()
 const inventory = useInventoryStore()
@@ -69,7 +71,30 @@ function styleOf(tab: { id: string, layout: TabLayout }) {
   return colors.length > 1 ? tintGradient(colors) : undefined
 }
 
-const emit = defineEmits<{ newTab: [] }>()
+const router = useRouter()
+
+/*
+ * The bar is part of the window header, so it is on screen on every page. Anything that
+ * acts on a tab has to bring the terminals back with it, or the click does nothing visible.
+ */
+function showTerminals() {
+  if (router.currentRoute.value.path !== '/terminals') void router.push('/terminals')
+}
+
+function selectTab(tabId: string) {
+  sessions.focusTab(tabId)
+  showTerminals()
+}
+
+/*
+ * A new tab is an empty pane plus quick connect, which is also what ⌘T does. The dialog's
+ * open flag is shared rather than emitted: the view that renders it may not be mounted yet.
+ */
+function newTab() {
+  sessions.openTab()
+  openQuickConnect()
+  showTerminals()
+}
 
 const strip = ref<HTMLDivElement | null>(null)
 /** Where a dropped tab would land, or `null` when nothing is being dragged over the bar. */
@@ -129,10 +154,10 @@ function onDrop(event: DragEvent) {
 
 <template>
   <!--
-    Rendered into the window header by `TerminalsView`, so it has no height or border of its
-    own. The bar and its strip carry the drag region: the tabs now cover the header that had
-    it, and the attribute does not reach an element laid over it. The tabs themselves do
-    not, which is what keeps dragging a tab from dragging the window.
+    Rendered by `AppHeader`, so it has no height or border of its own. The bar and its strip
+    carry the drag region: they cover the header that had it, and the attribute does not
+    reach an element laid over it. The tabs themselves do not, which is what keeps dragging
+    a tab from dragging the window.
   -->
   <div data-tauri-drag-region class="flex min-w-0 flex-1 items-center gap-1 self-stretch">
     <div
@@ -156,7 +181,7 @@ function onDrop(event: DragEvent) {
           dragging?.kind === 'tab' && dragging.tabId === tab.id && 'opacity-40',
         )"
         :style="styleOf(tab)"
-        @click="sessions.focusTab(tab.id)"
+        @click="selectTab(tab.id)"
         @dragstart="onDragStart(tab.id, $event)"
         @dragend="onDragEnd"
       >
@@ -214,7 +239,7 @@ function onDrop(event: DragEvent) {
       size="icon"
       class="size-7"
       aria-label="New tab"
-      @click="emit('newTab')"
+      @click="newTab"
     >
       <PlusIcon />
     </Button>

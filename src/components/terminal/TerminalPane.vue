@@ -340,6 +340,28 @@ watch(
   },
 )
 
+/*
+ * A pane handed a host while it is already on screen - quick connect aiming at an empty
+ * pane - dials from here. The mount-time connect ran when there was no host to dial, and
+ * nothing else would ever call it.
+ *
+ * Fitted first, in a frame where the terminal is no longer `display: none`: it reports no
+ * size while the pane has no host, so connecting straight away would open the PTY at
+ * xterm's default 80x24 and leave it there until the next resize.
+ */
+watch(
+  () => props.hostId,
+  (hostId) => {
+    if (!hostId || props.sessionId || props.autoConnect === false) return
+    if (status.value !== 'idle') return
+    requestAnimationFrame(() => {
+      handleResize()
+      void connect()
+    })
+  },
+  { flush: 'post' },
+)
+
 // Mirrors the store onto the entry, which is what the terminal's own handlers read.
 watch(
   () => props.sessionId,

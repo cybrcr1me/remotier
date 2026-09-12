@@ -91,6 +91,11 @@ export interface ColorOption {
   swatch: string
   /** A faint fill with a matching border, for a selected surface such as the active tab. */
   tint: string
+  /**
+   * A card-sized fill, fainter still. Mixed into `--card` rather than laid over it at low
+   * alpha, so a tinted card keeps the same lift off the canvas as an untinted one.
+   */
+  surface: string
   /** Foreground colour, for an icon. */
   text: string
   /** The colour itself, for the one place a class cannot carry it: a gradient built from data. */
@@ -98,8 +103,8 @@ export interface ColorOption {
 }
 
 /**
- * Markers only: an edge, an icon, or a faint tint behind something selected. A solid fill
- * would fight the terminal beneath it and the semantic tokens everywhere else.
+ * Markers only: an edge, an icon, or a faint tint behind something selected or a card. A
+ * solid fill would fight the terminal beneath it and the semantic tokens everywhere else.
  */
 export const COLORS: ColorOption[] = [
   {
@@ -108,6 +113,7 @@ export const COLORS: ColorOption[] = [
     border: 'border-border',
     swatch: 'bg-muted-foreground/40',
     tint: 'border-border bg-accent',
+    surface: 'bg-card',
     text: 'text-muted-foreground',
     value: 'var(--muted-foreground)',
   },
@@ -117,6 +123,7 @@ export const COLORS: ColorOption[] = [
     border: 'border-red-500/70',
     swatch: 'bg-red-500',
     tint: 'border-red-500/40 bg-red-500/15',
+    surface: 'bg-[color-mix(in_oklab,var(--color-red-500)_7%,var(--card))]',
     text: 'text-red-400',
     value: 'var(--color-red-500)',
   },
@@ -126,6 +133,7 @@ export const COLORS: ColorOption[] = [
     border: 'border-amber-500/70',
     swatch: 'bg-amber-500',
     tint: 'border-amber-500/40 bg-amber-500/15',
+    surface: 'bg-[color-mix(in_oklab,var(--color-amber-500)_7%,var(--card))]',
     text: 'text-amber-400',
     value: 'var(--color-amber-500)',
   },
@@ -135,6 +143,7 @@ export const COLORS: ColorOption[] = [
     border: 'border-emerald-500/70',
     swatch: 'bg-emerald-500',
     tint: 'border-emerald-500/40 bg-emerald-500/15',
+    surface: 'bg-[color-mix(in_oklab,var(--color-emerald-500)_7%,var(--card))]',
     text: 'text-emerald-400',
     value: 'var(--color-emerald-500)',
   },
@@ -144,6 +153,7 @@ export const COLORS: ColorOption[] = [
     border: 'border-teal-500/70',
     swatch: 'bg-teal-500',
     tint: 'border-teal-500/40 bg-teal-500/15',
+    surface: 'bg-[color-mix(in_oklab,var(--color-teal-500)_7%,var(--card))]',
     text: 'text-teal-400',
     value: 'var(--color-teal-500)',
   },
@@ -153,6 +163,7 @@ export const COLORS: ColorOption[] = [
     border: 'border-blue-500/70',
     swatch: 'bg-blue-500',
     tint: 'border-blue-500/40 bg-blue-500/15',
+    surface: 'bg-[color-mix(in_oklab,var(--color-blue-500)_7%,var(--card))]',
     text: 'text-blue-400',
     value: 'var(--color-blue-500)',
   },
@@ -162,6 +173,7 @@ export const COLORS: ColorOption[] = [
     border: 'border-violet-500/70',
     swatch: 'bg-violet-500',
     tint: 'border-violet-500/40 bg-violet-500/15',
+    surface: 'bg-[color-mix(in_oklab,var(--color-violet-500)_7%,var(--card))]',
     text: 'text-violet-400',
     value: 'var(--color-violet-500)',
   },
@@ -171,6 +183,7 @@ export const COLORS: ColorOption[] = [
     border: 'border-pink-500/70',
     swatch: 'bg-pink-500',
     tint: 'border-pink-500/40 bg-pink-500/15',
+    surface: 'bg-[color-mix(in_oklab,var(--color-pink-500)_7%,var(--card))]',
     text: 'text-pink-400',
     value: 'var(--color-pink-500)',
   },
@@ -186,6 +199,11 @@ export function colorBorder(key: string | null | undefined): string {
 /** Fill and border for a selected surface. Unknown keys get the neutral surface. */
 export function colorTint(key: string | null | undefined): string {
   return (key && COLOR_MAP.get(key)?.tint) || 'border-border bg-accent'
+}
+
+/** Card fill for a stored colour key. Unknown keys get the plain card surface. */
+export function colorSurface(key: string | null | undefined): string {
+  return (key && COLOR_MAP.get(key)?.surface) || 'bg-card'
 }
 
 /** Icon colour for a stored colour key. Unknown keys get the muted foreground. */

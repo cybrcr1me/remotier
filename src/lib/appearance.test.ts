@@ -5,6 +5,7 @@ import {
   catalogKey,
   catalogReference,
   colorBorder,
+  colorSurface,
   colorSwatch,
   colorText,
   colorTint,
@@ -79,8 +80,24 @@ describe('colors', () => {
       expect(colorBorder(option.key), option.key).toBe(option.border)
       expect(colorSwatch(option.key), option.key).toBe(option.swatch)
       expect(colorTint(option.key), option.key).toBe(option.tint)
+      expect(colorSurface(option.key), option.key).toBe(option.surface)
       expect(colorText(option.key), option.key).toBe(option.text)
     }
+  })
+
+  it('mixes a card fill into the card token rather than over it', () => {
+    // Laid over the canvas at low alpha instead, a tinted card would lose the lift an
+    // untinted one has, so the two would no longer read as the same surface.
+    for (const option of COLORS) {
+      if (option.key === 'default') continue
+      expect(option.surface, option.key).toContain('var(--card)')
+    }
+  })
+
+  it('falls back to the plain card surface', () => {
+    expect(colorSurface(null)).toBe('bg-card')
+    expect(colorSurface('chartreuse')).toBe('bg-card')
+    expect(colorSurface('default')).toBe('bg-card')
   })
 
   it('falls back to the neutral tint and a muted icon', () => {

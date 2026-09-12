@@ -287,6 +287,25 @@ export interface SyncStatus {
   error: string | null
 }
 
+/**
+ * One record a cycle sent or received. Local-only and capped in the database, so the
+ * panel shows recent activity rather than an audit trail.
+ */
+export interface SyncHistoryEntry {
+  at: number
+  /** 'push' this machine sent it, 'pull' it arrived from another. */
+  direction: 'push' | 'pull'
+  action: 'written' | 'deleted'
+  /** 'host', 'group', 'identity', 'var_def', 'workspace', 'setting', 'device_layout'. */
+  kind: string
+  recordId: string
+  /**
+   * The record's name when it went past. Null for a tombstone this machine pushed — the
+   * row was already gone before the cycle started.
+   */
+  label: string | null
+}
+
 /** Another machine with a saved tab layout. */
 export interface DeviceLayout {
   deviceId: string

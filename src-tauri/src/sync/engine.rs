@@ -26,6 +26,7 @@ use crate::error::{Error, Result};
 
 use super::client::Client;
 use super::groups::Keyring;
+use super::history::{self, Action, Entry};
 use super::{apply, collect, groups, state};
 
 /// How many records go in one push. Bounds the request a proxy has to accept, and keeps
@@ -150,6 +151,14 @@ impl SyncEngine {
             applied: *self.applied.read().await,
             error: self.last_error.read().await.clone(),
         })
+    }
+
+    /// The most recent records this device sent or received.
+    ///
+    /// Readable while signed out - signing out clears it, so anything still here belongs
+    /// to the session the user is looking at.
+    pub fn history(&self, limit: usize) -> Result<Vec<history::HistoryEntry>> {
+        self.db.read(|conn| history::recent(conn, limit))
     }
 
     /// Create an account. Returns the recovery code, which is shown once and never again.
@@ -435,12 +444,24 @@ impl SyncEngine {
                 return Ok(());
             }
 
+            // Which of these were deletions, kept for the history: the envelopes
+            // themselves are handed to the client, and a tombstone is indistinguishable
+            // from a write once only its id has come back.
+            let tombstones: Vec<String> = batch
+                .envelopes
+                .iter()
+                .filter(|e| e.deleted_at.is_some())
+                .map(|e| format!("{}:{}", e.kind.as_str(), e.id))
+                .collect();
+
             // Phase two: the network, with no lock held.
             let response = client.push(access, batch.envelopes).await?;
 
             // Phase three: record what happened.
             self.db.write(|tx| {
                 collect::mark_pushed(tx, &response.accepted)?;
+                let sent = pushed_entries(tx, &response.accepted, &tombstones)?;
+                history::record(tx, history::Direction::Push, &sent)?;
                 for refused in &response.rejected {
                     use remotier_sync_proto::api::RejectReason;
                     match refused.reason {
@@ -509,6 +530,7 @@ impl SyncEngine {
 
         let applied = self.db.write(|tx| {
             let applied = apply::apply(tx, &keyring, &state.device_id, &batch)?;
+            history::record(tx, history::Direction::Pull, &applied.entries)?;
             state::save_cursor(tx, cursor, now_ms())?;
             Ok(applied)
         })?;
@@ -830,6 +852,40 @@ impl SyncEngine {
         })?;
         Ok(session.access_token)
     }
+}
+
+/// History entries for the records the server took.
+///
+/// Only the accepted ones: a refused record did not sync, and listing it as though it
+/// had is worse than not listing it. A tombstone has no local row left to name, so it is
+/// recorded without a label and the panel shows its kind.
+fn pushed_entries(
+    tx: &rusqlite::Transaction,
+    accepted: &[remotier_sync_proto::api::Accepted],
+    tombstones: &[String],
+) -> Result<Vec<Entry>> {
+    let mut entries = Vec::with_capacity(accepted.len());
+    for record in accepted {
+        // An unrecognised kind is a newer build's record echoed back. Nothing sensible to
+        // show, and `Entry` names the kinds this build knows.
+        let Some(kind) = remotier_sync_proto::record::RecordKind::parse(&record.kind) else {
+            continue;
+        };
+        let deleted = tombstones
+            .iter()
+            .any(|t| t == &format!("{}:{}", kind.as_str(), record.id));
+        entries.push(Entry {
+            kind: kind.as_str(),
+            id: record.id.clone(),
+            action: if deleted { Action::Deleted } else { Action::Written },
+            label: if deleted {
+                None
+            } else {
+                history::label_of(tx, kind.as_str(), &record.id)?
+            },
+        });
+    }
+    Ok(entries)
 }
 
 fn decode_hex(s: &str) -> Result<Vec<u8>> {

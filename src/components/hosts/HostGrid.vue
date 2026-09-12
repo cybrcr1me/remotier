@@ -8,7 +8,7 @@ import {
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { colorBorder, hasColor } from '@/lib/appearance'
+import { colorBorder, colorSurface, colorText, hasColor } from '@/lib/appearance'
 import EntityIcon from './EntityIcon.vue'
 import { summarise, type FlatHost, type GroupNode } from '@/lib/tree'
 import { cn } from '@/lib/utils'
@@ -66,9 +66,9 @@ function contents(node: GroupNode): string {
               role="button"
               tabindex="0"
               :class="cn(
-                'group relative flex cursor-pointer flex-col gap-3 rounded-xl border bg-card p-4 text-left',
+                'group relative flex cursor-pointer flex-col gap-3 rounded-xl border p-4 text-left',
                 'transition-colors hover:border-ring focus-visible:border-ring focus-visible:outline-none',
-                colorBorder(node.group.color),
+                colorSurface(node.group.color),
               )"
               :aria-label="`Open ${node.name}`"
               @click="emit('open', node.id)"
@@ -79,10 +79,14 @@ function contents(node: GroupNode): string {
                 <span
                   :class="cn(
                     'flex size-9 shrink-0 items-center justify-center rounded-lg border bg-muted/60',
-                    hasColor(node.group.color) && colorBorder(node.group.color),
+                    colorBorder(node.group.color),
                   )"
                 >
-                  <EntityIcon :icon="node.group.icon" kind="group" class="size-4" />
+                  <EntityIcon
+                    :icon="node.group.icon"
+                    kind="group"
+                    :class="cn('size-4', hasColor(node.group.color) && colorText(node.group.color))"
+                  />
                 </span>
 
                 <div class="flex min-w-0 flex-1 flex-col">
@@ -133,11 +137,17 @@ function contents(node: GroupNode): string {
       <div class="grid grid-cols-[repeat(auto-fill,minmax(16rem,1fr))] gap-3">
         <ContextMenu v-for="entry in hosts" :key="entry.host.id">
           <ContextMenuTrigger as-child>
+            <!--
+              The card's own border stays neutral. Colouring it as well as the icon's put two
+              rings of the same colour around the same card, and the outer one fought the
+              hover and focus borders that have to be visible on top of it. The colour is
+              carried by the icon - its edge and its glyph - and a faint wash behind the card.
+            -->
             <div
               :class="cn(
-                'group relative flex cursor-default flex-col gap-3 rounded-xl border bg-card p-4',
+                'group relative flex cursor-default flex-col gap-3 rounded-xl border p-4',
                 'transition-colors hover:border-ring',
-                colorBorder(entry.host.color),
+                colorSurface(entry.host.color),
               )"
               @dblclick="emit('connect', entry.host.id)"
             >
@@ -145,10 +155,13 @@ function contents(node: GroupNode): string {
                 <span
                   :class="cn(
                     'flex size-9 shrink-0 items-center justify-center rounded-lg border bg-muted/60',
-                    hasColor(entry.host.color) && colorBorder(entry.host.color),
+                    colorBorder(entry.host.color),
                   )"
                 >
-                  <EntityIcon :icon="entry.host.icon" class="size-4" />
+                  <EntityIcon
+                    :icon="entry.host.icon"
+                    :class="cn('size-4', hasColor(entry.host.color) && colorText(entry.host.color))"
+                  />
                 </span>
 
                 <div class="flex min-w-0 flex-1 flex-col">

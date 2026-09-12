@@ -8,7 +8,7 @@ use remotier_sync_proto::crypto;
 use remotier_sync_proto::record::{Envelope, RecordKind};
 use remotier_lib::db::Db;
 use remotier_lib::sync::groups::Keyring;
-use remotier_lib::sync::{apply, collect};
+use remotier_lib::sync::{apply, collect, history};
 
 struct Device {
     db: Db,
@@ -168,6 +168,59 @@ fn a_host_reaches_the_other_device() {
 
     assert_eq!(applied.written, 1);
     assert_eq!(b.hostname("h1").as_deref(), Some("terminal.shop"));
+}
+
+#[test]
+fn an_applied_record_is_named_in_the_history() {
+    // The panel lists what a cycle did, and a list of uuids says nothing. The name comes
+    // out of the payload on the way in.
+    let key = key();
+    let (a, b) = (Device::new("dev-a"), Device::new("dev-b"));
+
+    a.add_host("h1", "terminal.shop", None, 100);
+    let applied = a.push_to(&b, &key);
+
+    assert_eq!(applied.entries.len(), 1);
+    assert_eq!(applied.entries[0].kind, "host");
+    assert_eq!(applied.entries[0].action, history::Action::Written);
+    assert_eq!(applied.entries[0].label.as_deref(), Some("h1"));
+}
+
+#[test]
+fn a_deleted_record_keeps_its_name_in_the_history() {
+    // A tombstone carries no payload and the local row is gone a line later, so the name
+    // has to be read before the delete. Otherwise the one entry a reader most wants to
+    // understand - something vanished - is a bare uuid.
+    let key = key();
+    let (a, b) = (Device::new("dev-a"), Device::new("dev-b"));
+
+    a.add_host("h1", "terminal.shop", None, 100);
+    a.push_to(&b, &key);
+
+    a.delete_host("h1");
+    let applied = a.push_to(&b, &key);
+
+    assert_eq!(applied.entries.len(), 1);
+    assert_eq!(applied.entries[0].action, history::Action::Deleted);
+    assert_eq!(applied.entries[0].label.as_deref(), Some("h1"));
+}
+
+#[test]
+fn a_record_that_was_skipped_is_not_in_the_history() {
+    // Nothing happened to it - the local copy is newer and stays. An entry saying it was
+    // synced would be a lie, and a list of non-events is noise.
+    let key = key();
+    let (a, b) = (Device::new("dev-a"), Device::new("dev-b"));
+
+    a.add_host("h1", "old.example", None, 100);
+    a.push_to(&b, &key);
+
+    b.edit_host("h1", "new.example", 300);
+    a.edit_host("h1", "stale.example", 200);
+    let applied = a.push_to(&b, &key);
+
+    assert_eq!(applied.skipped, 1);
+    assert!(applied.entries.is_empty());
 }
 
 #[test]

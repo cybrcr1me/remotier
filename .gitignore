@@ -23,6 +23,12 @@ dist-ssr
 *.sln
 *.sw?
 
+# Signing and notarisation credentials for `bun run build:mac`. `.env.example` documents
+# the names; the real file holds an app-specific password and never gets committed.
+.env
+.env.*
+!.env.example
+
 # Tauri
 src-tauri/target
 src-tauri/gen/schemas

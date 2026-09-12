@@ -2,14 +2,17 @@ import { describe, expect, it } from 'vitest'
 
 import {
   FORMAT_VERSION,
+  entryLabel,
+  entryVerb,
   instanceLabel,
   instanceProblem,
   isDefaultInstance,
+  kindLabel,
   lastSyncLabel,
   normaliseInstanceUrl,
   summarise,
 } from './sync-status'
-import type { SyncStatus } from './types'
+import type { SyncHistoryEntry, SyncStatus } from './types'
 
 const base: SyncStatus = {
   signedIn: true,
@@ -116,6 +119,40 @@ describe('summarise', () => {
 
   it('prefers the in-flight state to a count', () => {
     expect(summarise({ ...base, syncing: true, pending: 3 })).toBe('Syncing.')
+  })
+})
+
+describe('the activity list', () => {
+  const entry: SyncHistoryEntry = {
+    at: 1_000,
+    direction: 'pull',
+    action: 'written',
+    kind: 'host',
+    recordId: '3f2b7c1a-0d44-4e8a-9c11-5b6d7e8f9a01',
+    label: 'terminal.shop',
+  }
+
+  it('names a record by its label', () => {
+    expect(entryLabel(entry)).toBe('terminal.shop')
+  })
+
+  it('falls back to a short id when the row was already gone', () => {
+    // Only a tombstone this machine pushed gets here. The whole uuid is unrecognisable
+    // either way and would push the timestamp off the row.
+    expect(entryLabel({ ...entry, label: null })).toBe('3f2b7c1a')
+  })
+
+  it('says what happened from this device point of view', () => {
+    expect(entryVerb(entry)).toBe('Received')
+    expect(entryVerb({ ...entry, direction: 'push' })).toBe('Sent')
+    expect(entryVerb({ ...entry, action: 'deleted', direction: 'push' })).toBe('Deleted')
+    expect(entryVerb({ ...entry, action: 'deleted', direction: 'pull' })).toBe('Removed here')
+  })
+
+  it('shows a kind it does not know rather than hiding the row', () => {
+    // A newer build's record still happened, and the raw key says more than a blank.
+    expect(kindLabel('var_def')).toBe('Placeholder')
+    expect(kindLabel('something_new')).toBe('something_new')
   })
 })
 

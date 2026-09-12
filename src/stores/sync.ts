@@ -4,7 +4,7 @@ import { listen } from '@tauri-apps/api/event'
 import { platform, hostname } from '@tauri-apps/plugin-os'
 
 import { ipc, errorMessage } from '@/lib/ipc'
-import type { DeviceLayout, InstanceInfo, SyncStatus } from '@/lib/types'
+import type { DeviceLayout, InstanceInfo, SyncHistoryEntry, SyncStatus } from '@/lib/types'
 
 /**
  * The instance shipped for people who do not want to run their own. The sign-in screen
@@ -28,9 +28,14 @@ const EMPTY: SyncStatus = {
   error: null,
 }
 
+/** How many entries the panel asks for. The table keeps more; nobody scrolls past this. */
+const HISTORY_LIMIT = 30
+
 export const useSyncStore = defineStore('sync', () => {
   const status = ref<SyncStatus>({ ...EMPTY })
   const busy = ref(false)
+  /** The last records this device sent or received, newest first. */
+  const history = ref<SyncHistoryEntry[]>([])
   /** Shown once after registering, then dropped. Never persisted anywhere. */
   const recoveryCode = ref<string | null>(null)
 
@@ -49,6 +54,16 @@ export const useSyncStore = defineStore('sync', () => {
 
   async function load() {
     status.value = await ipc.syncStatus()
+  }
+
+  /**
+   * Reload the activity list.
+   *
+   * Read on demand rather than carried on the status event: it is a panel's worth of
+   * rows, and the event fires on every cycle whether or not anyone is looking at them.
+   */
+  async function loadHistory() {
+    history.value = await ipc.syncHistory(HISTORY_LIMIT)
   }
 
   /**
@@ -122,6 +137,9 @@ export const useSyncStore = defineStore('sync', () => {
     busy.value = true
     try {
       status.value = await ipc.syncLogout()
+      // The backend drops the rows with the account; holding the last copy on screen
+      // would leave a signed-out panel listing records.
+      history.value = []
     } finally {
       busy.value = false
     }
@@ -149,10 +167,12 @@ export const useSyncStore = defineStore('sync', () => {
   return {
     status,
     busy,
+    history,
     recoveryCode,
     signedIn,
     indicator,
     load,
+    loadHistory,
     watch,
     devices,
     deviceLayout,

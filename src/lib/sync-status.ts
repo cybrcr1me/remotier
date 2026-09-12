@@ -3,7 +3,7 @@
  * without a DOM.
  */
 
-import type { InstanceInfo, SyncStatus } from './types'
+import type { InstanceInfo, SyncHistoryEntry, SyncStatus } from './types'
 
 /** A URL is usable if it parses and speaks http(s). */
 export function normaliseInstanceUrl(raw: string): string | null {
@@ -72,6 +72,42 @@ export function summarise(status: SyncStatus): string {
     return `${status.pending} change${status.pending === 1 ? '' : 's'} waiting.`
   }
   return `Synced ${lastSyncLabel(status.lastSyncAt)}.`
+}
+
+/** What a record kind is called in the activity list. */
+const KIND_LABELS: Record<string, string> = {
+  host: 'Host',
+  group: 'Group',
+  identity: 'Identity',
+  var_def: 'Placeholder',
+  workspace: 'Workspace',
+  setting: 'Setting',
+  device_layout: 'Tabs',
+}
+
+/**
+ * A kind a newer build sent falls back to the raw key rather than being hidden: the row
+ * still happened, and "var_def" tells the reader more than an empty cell.
+ */
+export function kindLabel(kind: string): string {
+  return KIND_LABELS[kind] ?? kind
+}
+
+/**
+ * What to show for a record whose name is not known.
+ *
+ * Only a tombstone this machine pushed gets here - the row was deleted before the cycle
+ * that sent it. The id is truncated because the whole uuid is never recognisable anyway
+ * and a full one pushes the timestamp off the row.
+ */
+export function entryLabel(entry: SyncHistoryEntry): string {
+  return entry.label ?? entry.recordId.slice(0, 8)
+}
+
+/** Past tense, from this device's point of view. */
+export function entryVerb(entry: SyncHistoryEntry): string {
+  if (entry.action === 'deleted') return entry.direction === 'push' ? 'Deleted' : 'Removed here'
+  return entry.direction === 'push' ? 'Sent' : 'Received'
 }
 
 /** Why an instance cannot be used, or `null` if it can. */

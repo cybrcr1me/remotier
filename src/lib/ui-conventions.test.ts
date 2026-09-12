@@ -97,15 +97,26 @@ describe('chrome bars', () => {
   it('puts the terminal tabs in the window header, which stays draggable around them', () => {
     // A tab bar under a header holding nothing but the sidebar toggle cost every terminal a
     // row of height. The header's drag region does not reach what is laid over it, so the
-    // slot and the tab bar's own empty space have to carry it, or the window stops dragging.
+    // tab bar's own empty space has to carry it, or the window stops dragging by its title.
     const header = readFileSync(join(SRC, 'components/layout/AppHeader.vue'), 'utf8')
     const view = readFileSync(join(SRC, 'views/TerminalsView.vue'), 'utf8')
     const tabBar = readFileSync(join(SRC, 'components/terminal/TabBar.vue'), 'utf8')
 
-    expect(header).toMatch(/:id="HEADER_SLOT_ID" data-tauri-drag-region/)
-    expect(view).toMatch(/<Teleport[^>]*:to="HEADER_SLOT"/)
+    // Rendered by the header itself, so the tabs are on every page rather than only where
+    // the terminals are - the view no longer knows about the bar at all.
+    expect(header).toMatch(/<TabBar\s*\/>/)
+    expect(view).not.toMatch(/TabBar/)
     expect(tabBar).toMatch(/<div data-tauri-drag-region class="flex min-w-0 flex-1/)
     expect(tabBar).not.toMatch(/TOOLBAR_HEIGHT|BAR_HEIGHT/)
+  })
+
+  it('keeps the sidebar header draggable behind the wordmark', () => {
+    // The mark and the wordmark cover the strip reserved for the window buttons. The drag
+    // region applies to the element that carries it and to nothing laid over it, so the
+    // logo has to let the mousedown through or that half of the title bar cannot drag.
+    const sidebar = readFileSync(join(SRC, 'components/layout/AppSidebar.vue'), 'utf8')
+    expect(sidebar).toMatch(/<SidebarHeader\s+data-tauri-drag-region/)
+    expect(sidebar).toMatch(/class="pointer-events-none flex items-center/)
   })
 
   it('no bar hardcodes a height alongside the shared constant', () => {
@@ -187,7 +198,7 @@ describe('tab dragging', () => {
     // cannot be dropped into itself. Focus on click, which a drag never produces.
     const source = readFileSync(join(SRC, 'components/terminal/TabBar.vue'), 'utf8')
     expect(source).not.toMatch(/@mousedown/)
-    expect(source).toMatch(/@click="sessions\.focusTab/)
+    expect(source).toMatch(/@click="selectTab\(/)
   })
 })
 

@@ -3,6 +3,7 @@ pub mod client;
 pub mod collect;
 pub mod engine;
 pub mod groups;
+pub mod history;
 pub mod settings;
 pub mod state;
 pub mod worker;

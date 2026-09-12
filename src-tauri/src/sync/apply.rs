@@ -23,6 +23,7 @@ use rusqlite::{OptionalExtension, Transaction};
 use crate::error::Result;
 
 use super::groups::Keyring;
+use super::history::{self, Action, Entry};
 use super::settings::is_syncable;
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -33,6 +34,9 @@ pub struct Applied {
     /// open, or a group key this machine does not hold. Counted rather than thrown, so
     /// one unreadable record does not lose the batch.
     pub skipped: usize,
+    /// What landed, in the order it landed, for the panel's history. Skipped records are
+    /// not in here: nothing happened to them, and a list of non-events is noise.
+    pub entries: Vec<Entry>,
 }
 
 /// Apply a whole pull.
@@ -61,8 +65,14 @@ pub fn apply(
     ] {
         for envelope in batch.iter().filter(|e| e.kind == kind) {
             match one(tx, keys, device_id, envelope) {
-                Ok(Outcome::Written) => applied.written += 1,
-                Ok(Outcome::Deleted) => applied.deleted += 1,
+                Ok(Outcome::Written(label)) => {
+                    applied.written += 1;
+                    applied.entries.push(entry(envelope, Action::Written, label));
+                }
+                Ok(Outcome::Deleted(label)) => {
+                    applied.deleted += 1;
+                    applied.entries.push(entry(envelope, Action::Deleted, label));
+                }
                 Ok(Outcome::Skipped) => applied.skipped += 1,
                 Err(e) => {
                     // A record that will not open is almost always a key mismatch on one
@@ -81,10 +91,22 @@ pub fn apply(
     Ok(applied)
 }
 
+/// The two that changed something carry the record's name, taken from the payload on
+/// the way in and from the local row on the way out - after a delete there is nothing
+/// left to read it from.
 enum Outcome {
-    Written,
-    Deleted,
+    Written(Option<String>),
+    Deleted(Option<String>),
     Skipped,
+}
+
+fn entry(envelope: &Envelope, action: Action, label: Option<String>) -> Entry {
+    Entry {
+        kind: envelope.kind.as_str(),
+        id: envelope.id.clone(),
+        action,
+        label,
+    }
 }
 
 fn one(
@@ -105,8 +127,9 @@ fn one(
             return Ok(Outcome::Skipped);
         }
         if envelope.deleted_at.is_some() {
+            let label = history::label_of(tx, envelope.kind.as_str(), &envelope.id)?;
             tx.execute("DELETE FROM device_layouts WHERE device_id = ?1", [&envelope.id])?;
-            return Ok(Outcome::Deleted);
+            return Ok(Outcome::Deleted(label));
         }
 
         let Some(key) = keys.open_with(&envelope.key_ref) else {
@@ -128,7 +151,7 @@ fn one(
                 envelope.updated_at
             ],
         )?;
-        return Ok(Outcome::Written);
+        return Ok(Outcome::Written(Some(payload.device_name)));
     }
 
     if !wins(tx, device_id, envelope)? {
@@ -138,9 +161,12 @@ fn one(
     }
 
     if envelope.deleted_at.is_some() {
+        // Read the name before the row goes: a history entry saying only that some uuid
+        // was deleted is the one entry a reader most needs to understand.
+        let label = history::label_of(tx, envelope.kind.as_str(), &envelope.id)?;
         delete_row(tx, envelope)?;
         record_meta(tx, envelope)?;
-        return Ok(Outcome::Deleted);
+        return Ok(Outcome::Deleted(label));
     }
 
     // A record sealed under a group key this machine does not hold: a share that was
@@ -156,31 +182,37 @@ fn one(
     };
 
     let aad = envelope.aad();
-    match envelope.kind {
+    // Each arm hands back what to call the record, for the panel's history.
+    let label = match envelope.kind {
         RecordKind::Host => {
             let p: HostPayload =
                 crypto::open_json(key, &aad, &envelope.nonce, &envelope.ciphertext)?;
             write_host(tx, envelope, &p)?;
+            Some(p.label)
         }
         RecordKind::Group => {
             let p: GroupPayload =
                 crypto::open_json(key, &aad, &envelope.nonce, &envelope.ciphertext)?;
             write_group(tx, envelope, &p)?;
+            Some(p.name)
         }
         RecordKind::Identity => {
             let p: IdentityPayload =
                 crypto::open_json(key, &aad, &envelope.nonce, &envelope.ciphertext)?;
             write_identity(tx, envelope, &p)?;
+            Some(p.label)
         }
         RecordKind::VarDef => {
             let p: VarDefPayload =
                 crypto::open_json(key, &aad, &envelope.nonce, &envelope.ciphertext)?;
             write_var_def(tx, envelope, &p)?;
+            Some(p.name)
         }
         RecordKind::Workspace => {
             let p: WorkspacePayload =
                 crypto::open_json(key, &aad, &envelope.nonce, &envelope.ciphertext)?;
             write_workspace(tx, envelope, &p)?;
+            Some(p.name)
         }
         RecordKind::Setting => {
             let p: SettingPayload =
@@ -197,12 +229,13 @@ fn one(
                                                 updated_at = excluded.updated_at",
                 rusqlite::params![p.key, p.value, envelope.updated_at],
             )?;
+            Some(p.key)
         }
         RecordKind::DeviceLayout => unreachable!("handled above"),
-    }
+    };
 
     record_meta(tx, envelope)?;
-    Ok(Outcome::Written)
+    Ok(Outcome::Written(label))
 }
 
 /// Does the incoming record beat what is here?

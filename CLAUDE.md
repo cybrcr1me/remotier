@@ -443,6 +443,27 @@ Incoming layouts land in `device_layouts` (migration 7), never in `session_state
 plugin-os` can ask and the Rust side has no dependency that can. A session created before
 this existed pushes no layout rather than an unnamed one.
 
+### The activity list
+
+`sync_log` (migration 10) holds the last 200 records a cycle sent or received, and
+Settings → Sync shows 30 of them. `sync/history.rs` owns it.
+
+- **It is local-only, like `var_values` and `session_state`**: no trigger, never
+  collected. A synced history would have every machine replay every other machine's
+  activity as its own.
+- **The label is copied into the row, not joined out at read time.** Half the entries are
+  deletions, and after one there is nothing left to join to - so `apply` reads the name
+  *before* `delete_row`, and a deleted host reads as its name rather than a bare uuid. A
+  tombstone this device pushed is the one case with no label: the row was gone before the
+  cycle began, so the panel shows the kind and a short id.
+- **Only records the server accepted, and only records that changed something.** A refused
+  push did not sync, and a pull skipped as stale did nothing - listing either as activity
+  would be a lie. `a_record_that_was_skipped_is_not_in_the_history`.
+- **The layout push is not logged.** It happens every cycle the tabs move, so it would be
+  the only thing in the list.
+- Sign-out clears it, like the stored device layouts: it names records that came from the
+  account, including a colleague's through a shared group.
+
 ### Sync tests
 
 `src-tauri/tests/sync_roundtrip.rs` runs `collect` on one in-memory `Db` and `apply` on
@@ -488,6 +509,33 @@ stay empty.
 three manifests, icons present and in the right binary format, the entitlements file
 existing, a non-default identifier, and a CSP that forbids remote scripts. These fail
 locally instead of during a release build on a platform nobody is watching.
+
+**A release is built in two halves.** The `release` workflow builds Windows and Linux from
+the tag; macOS is built by hand with `bun run build:mac` (`scripts/build-mac.sh`) and
+uploaded to the same release. GitHub bills macOS runners at ten times the Linux rate, and
+the Developer ID certificate lives in a developer keychain rather than in repository
+secrets. The workflow therefore leaves the release a **draft**: published automatically,
+a version would go out with no Mac download at all.
+
+The Mac script refuses to build unsigned, produces one universal binary rather than two
+per-architecture bundles, verifies what it made - `codesign --verify` always,
+`spctl --assess` and `stapler validate` when notarising - and then attaches the DMG to the
+release itself. An unverified notarised build fails on the user's machine and nowhere
+else. `scripts/check-version.sh` takes the tag as an optional argument, which is how the
+workflow fails a mismatched tag in seconds rather than after an hour of build time.
+
+Two rules in that script are load-bearing:
+
+- **It uploads into the release CI made; it never creates one.** `gh release create` here
+  would produce a second, Mac-only release under the same tag the moment the workflow
+  caught up. A missing draft is reported, not worked around.
+- **Publishing stays manual.** The script attaches the asset and prints the
+  `--draft=false` command; nothing in the automated path makes a release public.
+
+Credentials come from `.env` at the root (`.env.example` documents the four `APPLE_*`
+names), and the script **exits if `.env` is not gitignored**. A warning would be read
+after the commit containing an app-specific password already existed. The environment
+wins over the file, so one value can be overridden for a single run.
 
 ### Brand artwork
 
@@ -705,17 +753,38 @@ path as group ids; `lib/tree.ts` does the walking (`nodesAt`, `breadcrumb`, `sum
 
 ## The tabs live in the window header
 
-`TerminalsView` teleports its `TabBar` into `HEADER_SLOT`, a slot in `AppHeader` beside
-the sidebar toggle. That row held nothing else, and a tab bar beneath it cost every
-terminal a row of height. The view still owns the bar: it unmounts on navigation, and the
-tabs go with it, so no other view shows them. The view toolbars elsewhere keep their own
-row under the header.
+`AppHeader` renders `TabBar` beside the sidebar toggle. That row held nothing else, and a
+tab bar beneath it cost every terminal a row of height. The header renders it on **every**
+page rather than the terminals view teleporting it in: the row is empty on the other pages
+anyway, and a running session is worth reaching from wherever you are. The view toolbars
+elsewhere keep their own row under the header.
 
-The header is the window's drag region, and the slot and the tab bar now cover it. The
-attribute on the header does not reach an element laid over it, so the slot, the bar and
-its strip carry `data-tauri-drag-region` too - without it the window cannot be dragged by
-its title bar at all. Tabs do not carry it, which keeps dragging a tab from dragging the
-window. `ui-conventions.test.ts` checks both.
+So the bar has to work from a page where `TerminalsView` does not exist. Clicking a tab, and
+`+`, route to `/terminals` themselves, and the quick connect dialog's open flag lives in
+`lib/quick-connect.ts` rather than in the view - `+` has to open a dialog that is not
+mounted yet, and have it appear once the terminals are back.
+
+The header is the window's drag region, and the tab bar now covers it. The attribute on the
+header does not reach an element laid over it, so the bar and its strip carry
+`data-tauri-drag-region` too - without it the window cannot be dragged by its title bar at
+all. Tabs do not carry it, which keeps dragging a tab from dragging the window. The same
+trap sits in the sidebar header, where the mark and the wordmark cover the strip reserved
+for the macOS window buttons: they are `pointer-events-none`, so the mousedown lands on the
+header that has the attribute. `ui-conventions.test.ts` checks all of it.
+
+## Quick connect only takes over an empty pane
+
+⌘K sets the host on the focused pane when that pane holds nothing - no host and no session.
+Anything else opens a tab, whose pane is created with the host and dials on mount.
+
+Pointing a pane that already has a host at another one leaves its session running and its
+scrollback on screen, so the terminal goes on showing the host before it. That is what
+"the session did not switch" looked like: the tab title changed and nothing else did.
+
+The other half of it is in `TerminalPane`: a pane given a host **while it is mounted** has
+to dial from a watcher, because the mount-time connect ran when there was no host to dial.
+It fits first, in a frame where the terminal is no longer `display: none` - a pane with no
+host reports no size, and connecting straight away opens the PTY at xterm's default 80x24.
 
 ## Dragging tabs and panes
 

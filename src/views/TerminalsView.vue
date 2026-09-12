@@ -22,7 +22,6 @@ import SplitView from '@/components/terminal/SplitView.vue'
 import PasswordPrompt from '@/components/terminal/PasswordPrompt.vue'
 import PinPrompt from '@/components/terminal/PinPrompt.vue'
 import VariablePrompt from '@/components/terminal/VariablePrompt.vue'
-import TabBar from '@/components/terminal/TabBar.vue'
 import type {
   HostKeyDecision,
   HostKeyPrompt,
@@ -31,8 +30,8 @@ import type {
 import type { DropZone } from '@/lib/dnd'
 import { dragging, endDrag } from '@/lib/drag'
 import { markLost, releaseMissing } from '@/lib/terminal-registry'
+import { openQuickConnect, quickConnectOpen } from '@/lib/quick-connect'
 import { useTerminalShortcuts } from '@/lib/shortcuts'
-import { HEADER_SLOT } from '@/lib/ui'
 import type { SessionEvent } from '@/lib/types'
 import { useInventoryStore } from '@/stores/inventory'
 import { useSessionsStore } from '@/stores/sessions'
@@ -46,7 +45,6 @@ const sessions = useSessionsStore()
 const inventory = useInventoryStore()
 const { activeTab, activeTabId, tabs } = storeToRefs(sessions)
 
-const quickConnectOpen = ref(false)
 const hostKeyPrompt = ref<HostKeyPrompt | null>(null)
 let hostKeyDecide: ((choice: HostKeyDecision) => void) | null = null
 
@@ -111,21 +109,33 @@ function answerHostKey(choice: HostKeyDecision) {
   hostKeyDecide = null
 }
 
+/**
+ * Put a host on screen, from quick connect.
+ *
+ * Only a pane holding nothing is reused. Pointing a pane that already has one at another
+ * host leaves its session running and its scrollback on screen, so the terminal goes on
+ * showing the host before it - which is what "the session did not switch" looked like.
+ * Anything else opens a tab, where the pane is created with its host and dials on mount.
+ *
+ * No renaming: a tab's title is derived from the panes it holds, so a name taken from the
+ * first host would go stale the moment that pane moved or changed host.
+ */
 function openHost(hostId: string) {
-  const host = inventory.hostById.get(hostId)
-  const tab = sessions.activeTab ?? sessions.openTab(host?.label ?? 'Session')
-
+  const tab = sessions.activeTab
   const pane = sessions.activePane
-  if (!pane) return
 
-  // No renaming: a tab's title is derived from the panes it holds, so naming it after the
-  // first host would only leave a stale label behind once that pane moved or changed host.
-  sessions.setPaneHost(tab.id, pane.id, hostId)
+  if (tab && pane && !pane.hostId && !pane.sessionId) {
+    sessions.setPaneHost(tab.id, pane.id, hostId)
+    return
+  }
+
+  const host = inventory.hostById.get(hostId)
+  sessions.openTab(host?.label ?? 'Session', hostId)
 }
 
 function newTab() {
   sessions.openTab()
-  quickConnectOpen.value = true
+  openQuickConnect()
 }
 
 /**
@@ -166,9 +176,7 @@ watch(
 
 useTerminalShortcuts({
   newTab,
-  quickConnect: () => {
-    quickConnectOpen.value = true
-  },
+  quickConnect: openQuickConnect,
   splitRow: () => sessions.splitActivePane('row'),
   splitCol: () => sessions.splitActivePane('col'),
   closePane: () => {
@@ -215,16 +223,6 @@ onBeforeUnmount(() => unlisten?.())
 
 <template>
   <div class="flex h-full min-h-0 flex-col">
-    <!--
-      The tabs sit in the window header rather than in a bar of their own: that row held
-      nothing but the sidebar toggle, and a second bar cost every terminal a row of height.
-      Teleported rather than rendered by the header, so this view still owns them - it
-      unmounts on navigation, and the tabs go with it.
-    -->
-    <Teleport defer :to="HEADER_SLOT">
-      <TabBar @new-tab="newTab" />
-    </Teleport>
-
     <!--
       Every tab stays mounted and is merely hidden. Tearing one down would dispose its
       terminal, which drops the IPC channel and ends the SSH session behind it - so

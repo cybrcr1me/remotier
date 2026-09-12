@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import TabBar from '@/components/terminal/TabBar.vue'
 import { SidebarTrigger, useSidebar } from '@/components/ui/sidebar'
-import { BAR_HEIGHT, HEADER_SLOT_ID } from '@/lib/ui'
+import { BAR_HEIGHT } from '@/lib/ui'
 import { cn } from '@/lib/utils'
 
 const { state } = useSidebar()
@@ -19,10 +20,12 @@ const { state } = useSidebar()
   >
     <SidebarTrigger />
     <!--
-      Where a view puts content of its own - the terminal tabs - instead of adding a bar
-      beneath the header. It fills the rest of the row, so it carries the drag region too:
-      the header's own attribute does not reach an element laid over it.
+      The terminal tabs, rather than a bar of their own beneath this one: that cost every
+      terminal a row of height, and this row held nothing but the toggle. They are here on
+      every page, not only on the terminals view - the row is empty elsewhere anyway, and a
+      session is worth reaching from wherever you are. The bar fills the rest of the row, so
+      it carries the drag region itself: the header's attribute does not reach what covers it.
     -->
-    <div :id="HEADER_SLOT_ID" data-tauri-drag-region class="flex min-w-0 flex-1 self-stretch" />
+    <TabBar />
   </header>
 </template>

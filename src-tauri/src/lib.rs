@@ -98,6 +98,7 @@ pub fn run() {
             commands::sync::sync_recover,
             commands::sync::sync_logout,
             commands::sync::sync_now,
+            commands::sync::sync_history,
             commands::sync::sync_devices,
             commands::sync::sync_device_layout,
             commands::sync::sync_share_group,

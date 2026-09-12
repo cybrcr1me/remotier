@@ -10,6 +10,7 @@ use crate::error::{Error, Result};
 use crate::state::AppState;
 use crate::sync::client::Client;
 use crate::sync::engine::{DeviceLayout, SyncStatus};
+use crate::sync::history::HistoryEntry;
 
 /// Emitted when the engine finishes a cycle or the session changes. Low-frequency
 /// lifecycle, which is what Tauri events are for here - terminal bytes use a Channel.
@@ -93,6 +94,18 @@ pub async fn sync_logout(state: State<'_, AppState>) -> Result<SyncStatus> {
 #[tauri::command(async)]
 pub async fn sync_now(state: State<'_, AppState>) -> Result<SyncStatus> {
     state.sync().sync_now().await
+}
+
+/// What the last cycles sent and received, newest first.
+///
+/// Capped in the table itself, so a caller asking for more than is kept simply gets what
+/// there is.
+#[tauri::command(async)]
+pub async fn sync_history(
+    state: State<'_, AppState>,
+    limit: Option<usize>,
+) -> Result<Vec<HistoryEntry>> {
+    state.sync().history(limit.unwrap_or(30).min(200))
 }
 
 /// Machines with a saved layout, this one excluded.

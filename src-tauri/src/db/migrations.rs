@@ -568,6 +568,25 @@ INSERT OR IGNORE INTO sync_meta (kind, id, local_dirty, updated_at, group_id)
 INSERT OR IGNORE INTO sync_meta (kind, id, local_dirty, updated_at, group_id)
     SELECT 'setting', key, 1, updated_at, NULL FROM settings;
 "#,
+    // 10 - what the last few cycles actually did, for the sync panel.
+    //
+    // Local-only, like `var_values` and `session_state`, and for the same kind of reason:
+    // it has no trigger and must never be collected. A synced history would have every
+    // machine replay every other machine's activity as its own.
+    //
+    // The label is copied in rather than joined out at read time: half the interesting
+    // rows are deletions, and after one there is nothing left to join to.
+    r#"
+CREATE TABLE sync_log (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    at        INTEGER NOT NULL,
+    direction TEXT NOT NULL CHECK (direction IN ('push', 'pull')),
+    action    TEXT NOT NULL CHECK (action IN ('written', 'deleted')),
+    kind      TEXT NOT NULL,
+    record_id TEXT NOT NULL,
+    label     TEXT
+) STRICT;
+"#,
 ];pub fn apply(conn: &mut Connection) -> Result<()> {
     let current: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     let target = MIGRATIONS.len() as i64;
@@ -842,6 +861,12 @@ mod tests {
             [],
         )
         .unwrap();
+        conn.execute(
+            "INSERT INTO sync_log (at, direction, action, kind, record_id, label)
+             VALUES (100, 'pull', 'written', 'host', 'h1', 'web-01')",
+            [],
+        )
+        .unwrap();
 
         let tracked: i64 = conn
             .query_row("SELECT count(*) FROM sync_meta", [], |r| r.get(0))
@@ -851,7 +876,7 @@ mod tests {
         let triggers: i64 = conn
             .query_row(
                 "SELECT count(*) FROM sqlite_master WHERE type = 'trigger'
-                   AND tbl_name IN ('var_values', 'session_state', 'secrets', 'keys')",
+                   AND tbl_name IN ('var_values', 'session_state', 'sync_log', 'secrets', 'keys')",
                 [],
                 |r| r.get(0),
             )
@@ -1025,6 +1050,7 @@ mod tests {
         "48e5a9223a756b84283ef4f4945d3725ff042889809a0314c76d9ab38d8c0f1c",  // 7
         "25fc38322ff7817e92be9a6a7c2c97a4af67a811360984cc298303ec550e8920",  // 8
         "9581b7892d5d51fb52b9196869dd5f370197352283642dad3bd66ca686b91ec3",  // 9
+        "7e9bf832052c2056c5b35bca16e66efa4186e4e3f56bad3ed67bd669e733c508",  // 10
     ];
 
     fn fingerprint(sql: &str) -> String {

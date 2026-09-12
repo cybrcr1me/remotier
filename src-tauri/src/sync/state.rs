@@ -199,8 +199,11 @@ pub fn sign_out(tx: &Transaction, existing: &SyncState) -> Result<()> {
          WHERE id = 1",
         [],
     )?;
-    // Other machines' layouts are meaningless without the account that carried them.
+    // Other machines' layouts are meaningless without the account that carried them, and
+    // the history names records that came from it - including a colleague's, through a
+    // shared group. Both go with the account.
     tx.execute("DELETE FROM device_layouts", [])?;
+    super::history::clear(tx)?;
     tx.execute(
         "UPDATE sync_meta SET local_dirty = 1, server_seq = NULL",
         [],
