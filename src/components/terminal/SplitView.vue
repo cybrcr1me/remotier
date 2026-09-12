@@ -16,6 +16,11 @@ const props = defineProps<{
   activePaneId: string
   /** False while this tab is hidden behind another. */
   tabActive: boolean
+  /**
+   * True when the tab holds more than one pane, which is the only time the active one is
+   * worth marking: a lone pane is obviously the one that has the keyboard.
+   */
+  split: boolean
 }>()
 
 const sessions = useSessionsStore()
@@ -47,7 +52,11 @@ const emit = defineEmits<{
     :auto-connect="sessions.shouldAutoConnect(props.node.id)"
     :class="cn(
       'h-full',
-      props.node.id === props.activePaneId && 'ring-1 ring-ring',
+      // Drawn inside the pane, not around it: a splitter panel clips its children, so an
+      // outer ring on the pane that happens to sit against the group's edge is half cut
+      // off and the one beside it is not - which reads as two different highlights.
+      props.split && props.node.id === props.activePaneId
+        && 'inset-ring-1 inset-ring-primary',
     )"
     @focus="emit('focusPane', props.node.id)"
     @drop="zone => emit('dropOnPane', props.node.id, zone)"
@@ -70,6 +79,7 @@ const emit = defineEmits<{
           :tab-id="props.tabId"
           :active-pane-id="props.activePaneId"
           :tab-active="props.tabActive"
+          :split="props.split"
           @focus-pane="paneId => emit('focusPane', paneId)"
           @drop-on-pane="(paneId, zone) => emit('dropOnPane', paneId, zone)"
           @resize="(splitId, sizes) => emit('resize', splitId, sizes)"

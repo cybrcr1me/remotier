@@ -23,7 +23,9 @@ export default defineConfig({
   },
   test: {
     environment: 'happy-dom',
-    include: ['src/**/*.test.ts'],
+    // `scripts/` as well as the app: the updater manifest decides what every installed
+    // copy downloads next, which is worth a test even though it never ships.
+    include: ['src/**/*.test.ts', 'scripts/**/*.test.ts'],
     restoreMocks: true,
   },
 })

@@ -32,6 +32,7 @@ import { dragging, endDrag } from '@/lib/drag'
 import { markLost, releaseMissing } from '@/lib/terminal-registry'
 import { openQuickConnect, quickConnectOpen } from '@/lib/quick-connect'
 import { useTerminalShortcuts } from '@/lib/shortcuts'
+import { tabIsSplit } from '@/lib/tab-title'
 import type { SessionEvent } from '@/lib/types'
 import { useInventoryStore } from '@/stores/inventory'
 import { useSessionsStore } from '@/stores/sessions'
@@ -239,6 +240,7 @@ onBeforeUnmount(() => unlisten?.())
         :tab-id="tab.id"
         :active-pane-id="tab.activePaneId"
         :tab-active="tab.id === activeTabId"
+        :split="tabIsSplit(tab.layout)"
         @focus-pane="sessions.focusPane"
         @drop-on-pane="(paneId, zone) => onDropOnPane(tab.id, paneId, zone)"
         @resize="(splitId, sizes) => sessions.setSizes(tab.id, splitId, sizes)"

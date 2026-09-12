@@ -4,6 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import PlaceholderSettings from '@/components/settings/PlaceholderSettings.vue'
 import SyncSettings from '@/components/settings/SyncSettings.vue'
+import UpdateSettings from '@/components/settings/UpdateSettings.vue'
 import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -75,6 +76,7 @@ onMounted(async () => {
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="placeholders">Placeholders</TabsTrigger>
           <TabsTrigger value="sync">Sync</TabsTrigger>
+          <TabsTrigger value="updates">Updates</TabsTrigger>
         </TabsList>
 
         <TabsContent value="general" class="flex flex-col gap-4">
@@ -177,6 +179,10 @@ onMounted(async () => {
 
         <TabsContent value="sync">
           <SyncSettings />
+        </TabsContent>
+
+        <TabsContent value="updates">
+          <UpdateSettings />
         </TabsContent>
       </Tabs>
     </div>

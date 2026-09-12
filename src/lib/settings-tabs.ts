@@ -9,7 +9,7 @@
 
 import type { LocationQueryValue } from 'vue-router'
 
-export const SETTINGS_TABS = ['general', 'placeholders', 'sync'] as const
+export const SETTINGS_TABS = ['general', 'placeholders', 'sync', 'updates'] as const
 
 export type SettingsTab = (typeof SETTINGS_TABS)[number]
 

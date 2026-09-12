@@ -20,6 +20,7 @@ import type {
   SshKey,
   SyncHistoryEntry,
   SyncStatus,
+  UpdateInfo,
   VarDef,
   VarDefInput,
   VarScope,
@@ -151,6 +152,14 @@ export const ipc = {
     invoke<void>('set_var_value', { scope, scopeId, name, value }),
   clearVarValue: (scope: VarScope, scopeId: string, name: string) =>
     invoke<void>('clear_var_value', { scope, scopeId, name }),
+
+  /** `null` when this is already the newest version. */
+  updateCheck: () => invoke<UpdateInfo | null>('update_check'),
+  /**
+   * Download, install and restart into the new version. It does not resolve on success:
+   * the process is replaced. Progress arrives on the `update://progress` event.
+   */
+  updateInstall: () => invoke<void>('update_install'),
 }
 
 /** Narrow an unknown catch value to a tagged Rust error. */

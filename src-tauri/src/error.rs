@@ -48,6 +48,10 @@ pub enum Error {
     /// icon instead.
     #[error("icons: {0}")]
     Icon(String),
+    /// Checking for or installing a new version failed. Never fatal: the app in hand goes
+    /// on working, which is why the UI reports this quietly.
+    #[error("update: {0}")]
+    Update(String),
     #[error("internal error: {0}")]
     Internal(String),
 }
@@ -121,6 +125,7 @@ impl Error {
             Error::Sync(_) => "sync",
             Error::SyncUnauthorised => "syncUnauthorised",
             Error::Icon(_) => "icon",
+            Error::Update(_) => "update",
             Error::Internal(_) => "internal",
         }
     }

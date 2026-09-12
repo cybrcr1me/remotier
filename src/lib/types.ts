@@ -306,6 +306,21 @@ export interface SyncHistoryEntry {
   label: string | null
 }
 
+/** A version on offer, from the release manifest the updater reads. */
+export interface UpdateInfo {
+  version: string
+  /** What is running now, so the UI can name both ends without guessing. */
+  currentVersion: string
+  /** The release notes the manifest carried, if any. */
+  notes: string | null
+}
+
+/** How far the download has got. `total` is absent until the server has declared it. */
+export interface UpdateProgress {
+  downloaded: number
+  total: number | null
+}
+
 /** Another machine with a saved tab layout. */
 export interface DeviceLayout {
   deviceId: string

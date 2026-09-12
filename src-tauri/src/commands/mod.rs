@@ -6,6 +6,7 @@ pub mod keys;
 pub mod secrets;
 pub mod ssh;
 pub mod settings;
+pub mod updates;
 pub mod vars;
 pub mod workspaces;
 pub mod sync;

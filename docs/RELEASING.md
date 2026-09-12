@@ -14,10 +14,12 @@ published with no Mac download.
    `src-tauri/tauri.conf.json`. They must match: `bun run check:version`.
 2. Commit, then tag: `git tag v0.1.0 && git push origin v0.1.0`.
 3. The `release` workflow checks the tag against the manifests, opens a **draft** release,
-   builds Windows and Linux, and attaches them under their published names.
+   builds Windows and Linux, attaches them under their published names, and writes
+   `latest.json` for those two platforms.
 4. On the Mac, once CI has opened the draft: `bun run build:mac`. It builds, signs,
-   notarises, verifies and attaches the DMG to that draft.
-5. Check that all four assets are there under the names below, then publish:
+   notarises, verifies, attaches the DMG and the updater payload, and merges macOS into
+   the same `latest.json`.
+5. Check that every asset below is there, then publish:
 
    ```bash
    gh release view v0.1.0 --web
@@ -35,7 +37,14 @@ APPLE_SIGNING_IDENTITY="Developer ID Application: Your Name (TEAMID)"
 APPLE_ID="you@example.com"
 APPLE_PASSWORD="abcd-efgh-ijkl-mnop"   # app-specific password, not the account one
 APPLE_TEAM_ID="TEAMID"
+TAURI_SIGNING_PRIVATE_KEY=".tauri/remotier.key"
+TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
 ```
+
+The last two are the **updater** key, not Apple's - see [Auto updates](#auto-updates).
+The same pair has to exist as the repository secrets `TAURI_SIGNING_PRIVATE_KEY` and
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, or the Windows and Linux build fails before it
+starts.
 
 `.env` is gitignored, and the script **refuses to run if it ever stops being** - by the
 time anyone reads a warning about a committed password, the commit exists. Anything
@@ -73,6 +82,11 @@ nothing else would notice.
 | Linux | `Remotier.AppImage`, `Remotier.deb` | the `release` workflow |
 
 The version is on the release itself, not in the filenames.
+
+Three more assets are published for the in-app updater and are not downloads for anyone:
+`Remotier.app.tar.gz` (what a Mac update installs), the `.sig` beside it and beside the
+AppImage and the installer, and `latest.json` - the manifest every installed copy polls,
+which is why it too has a fixed name.
 
 ## The macOS build
 
@@ -185,8 +199,74 @@ above, because a runner has no keychain to read the identity from.
 
 ## Auto updates
 
-Not in this version. `tauri-plugin-updater` reads a signed manifest, so it needs an
-updater keypair (`bun run tauri signer generate`) plus an `updater` section in
-`tauri.conf.json` pointing at the releases feed. Note that both halves of the release have
-to produce the signature, so the manual macOS step would have to sign its own bundle and
-merge its entry into `latest.json` - that is the part to think about before enabling it.
+The app polls `https://github.com/cybrcr1me/remotier/releases/latest/download/latest.json`
+and offers what it finds. It never installs on its own: an update restarts the app, which
+ends every open SSH session, so Settings → Updates has the button.
+
+### The key, once
+
+```bash
+bun run tauri signer generate -w .tauri/remotier.key
+```
+
+- The printed **public** key goes in `plugins.updater.pubkey` in `tauri.conf.json`. It is
+  committed: every build has to carry it.
+- The **private** key stays in `.tauri/`, which is gitignored. `check-updater.sh` refuses
+  to build if it is ever tracked or unignored - a key committed once is a key published
+  for good, and this one cannot be rotated.
+- `.env` points at it, and the repository secrets `TAURI_SIGNING_PRIVATE_KEY` /
+  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` hold the file's **contents** and its password,
+  since a runner has no `.tauri/` to read:
+
+  ```bash
+  gh secret set TAURI_SIGNING_PRIVATE_KEY < .tauri/remotier.key
+  gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD --body ""
+  ```
+
+**This is not the Apple certificate and cannot be replaced by it.** The updater checks a
+download against the public key compiled into the copy already installed, *before* it
+replaces anything; Gatekeeper's verdict only arrives afterwards, at launch, and an
+AppImage has no operating-system signature at all.
+
+For the same reason the key cannot be rotated: a copy in the field only trusts the key it
+shipped with, so a new one strands everyone until they download a build by hand. Keep it.
+
+`scripts/check-updater.sh` fails the build when either half is missing, before the hour of
+build time rather than after.
+
+### What each half publishes
+
+`createUpdaterArtifacts` lives in `src-tauri/tauri.updater.conf.json`, passed as
+`--config` by the release build, rather than in the main config - with it there, an
+ordinary unsigned `bun run tauri build` would fail for want of a private key.
+
+- **CI** signs the AppImage and the NSIS installer as it builds them, uploads each `.sig`
+  beside its bundle, and then a separate `manifest` job writes `latest.json`. Separate
+  because two matrix jobs writing one file race, and the loser's platform disappears.
+- **`build:mac`** tars the `.app` *after* stapling, signs that tarball with
+  `tauri signer sign`, unpacks it again to check the signature and the ticket survived the
+  round trip, and merges its two entries into the same `latest.json`.
+
+The tarball is made by the script rather than by the bundler so its contents are provably
+the notarised app: the updater replaces the installed copy with whatever is inside it, and
+an unnotarised payload fails on the user's machine at the next launch.
+
+`scripts/updater-manifest.mjs` does the merging, and keeps the other half's platforms
+only when the manifest already there names **this** version - a leftover from an earlier
+release would otherwise advertise last month's download under this month's version number.
+The URLs inside point at the tag, not at `latest`, because "latest" moves the moment the
+next release is published.
+
+### Checking it worked
+
+After publishing, the manifest has to be reachable and complete:
+
+```bash
+curl -sL https://github.com/cybrcr1me/remotier/releases/latest/download/latest.json | \
+  node -p "const m=JSON.parse(require('fs').readFileSync(0,'utf8')); \
+    m.version + ': ' + Object.keys(m.platforms).join(', ')"
+```
+
+Four platform keys are expected: `darwin-aarch64`, `darwin-x86_64`, `linux-x86_64`,
+`windows-x86_64`. A draft release publishes nothing, so this answers with the previous
+version until the draft is published.

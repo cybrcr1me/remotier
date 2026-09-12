@@ -10,6 +10,10 @@ on:
 # (/releases/latest/download/Remotier.dmg), which GitHub resolves by *filename*, not by
 # version. So every release has to publish these exact names, and Tauri's own output -
 # Remotier_0.1.0-beta2_amd64.AppImage - cannot be uploaded as it stands.
+#
+# The `.sig` files beside two of them are the in-app updater's signatures, and
+# `latest.json` is the manifest every installed copy polls. Both halves of the release
+# write that file, so it is merged rather than replaced - see scripts/updater-manifest.mjs.
 env:
   LINUX_APPIMAGE: Remotier.AppImage
   LINUX_DEB: Remotier.deb
@@ -104,12 +108,30 @@ jobs:
           bun-version: latest
       - run: bun install --frozen-lockfile
 
+      # Before the build, not after: a missing updater key otherwise stops the bundler
+      # once the app has already been compiled, twenty minutes in.
+      - name: The updater is configured and has a key
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: scripts/check-updater.sh
+
       # Builds only. The release is created above and the assets are attached below,
       # because this action uploads Tauri's version-stamped filenames and the download
       # links need stable ones.
+      #
+      # The extra config turns on `createUpdaterArtifacts`, which is not in the main one:
+      # with it there, an ordinary unsigned `bun run tauri build` on a developer machine
+      # would fail for want of a private key.
       - uses: tauri-apps/tauri-action@v0
+        with:
+          args: --config src-tauri/tauri.updater.conf.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signs the update payload - unrelated to code signing, and the only key that
+          # matters to an already-installed copy deciding whether to trust a download.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # Windows signing is not configured. Until it is, SmartScreen warns until the
           # binary builds reputation; see docs/RELEASING.md.
 
@@ -136,13 +158,18 @@ jobs:
             cp "${matches[0]}" "upload/$dest"
           }
 
+          # The AppImage and the NSIS installer are also what the updater downloads, so
+          # their signatures travel with them. The signature covers the bytes, not the
+          # name, so renaming the bundle does not invalidate it.
           case "${{ runner.os }}" in
             Linux)
               copy_one "$bundle/appimage/*.AppImage" "$LINUX_APPIMAGE"
+              copy_one "$bundle/appimage/*.AppImage.sig" "$LINUX_APPIMAGE.sig"
               copy_one "$bundle/deb/*.deb" "$LINUX_DEB"
               ;;
             Windows)
               copy_one "$bundle/nsis/*-setup.exe" "$WINDOWS_SETUP"
+              copy_one "$bundle/nsis/*-setup.exe.sig" "$WINDOWS_SETUP.sig"
               ;;
           esac
 
@@ -157,3 +184,43 @@ jobs:
         # --clobber so re-running the workflow replaces the asset instead of failing on
         # the name, which is the whole point of the names being stable.
         run: gh release upload "$TAG" upload/* --clobber
+
+  # A job of its own because both build jobs would otherwise race to write the same
+  # manifest, and whichever finished second would drop the other's platform.
+  manifest:
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Merge Windows and Linux into latest.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          work=$(mktemp -d)
+
+          # Not tolerant of a missing signature: a manifest published without one leaves
+          # that platform checking for updates and never being offered any.
+          gh release download "$TAG" --dir "$work" \
+            --pattern "$LINUX_APPIMAGE.sig" --pattern "$WINDOWS_SETUP.sig"
+
+          # The macOS half of the release may already have written its entries, if it was
+          # built first. Merged rather than replaced so whichever runs second keeps both.
+          gh release download "$TAG" --dir "$work" --pattern latest.json || true
+
+          node scripts/updater-manifest.mjs \
+            --version "$(node -p "require('./package.json').version")" \
+            --tag "$TAG" \
+            --merge "$work/latest.json" \
+            --out "$work/merged.json" \
+            --entry "linux-x86_64,$LINUX_APPIMAGE,$work/$LINUX_APPIMAGE.sig" \
+            --entry "windows-x86_64,$WINDOWS_SETUP,$work/$WINDOWS_SETUP.sig"
+
+          mv "$work/merged.json" "$work/latest.json"
+          cat "$work/latest.json"
+          gh release upload "$TAG" "$work/latest.json" --clobber

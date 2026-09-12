@@ -10,6 +10,9 @@ export const DEFAULT_SETTINGS = {
   'ssh.agentSocket': '',
   'session.autoReconnect': 'false',
   'appearance.theme': 'dark',
+  // Checking only. Installing restarts the app and takes every session with it, so it is
+  // never automatic. Local by design - see `sync/settings.rs`.
+  'updates.autoCheck': 'true',
 } as const
 
 export type SettingKey = keyof typeof DEFAULT_SETTINGS

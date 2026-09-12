@@ -35,3 +35,7 @@ src-tauri/gen/schemas
 
 # Rasterised from design/icon.svg; regenerate with `bunx tauri icon`
 design/icon.png
+
+# The updater signing key. Private half: never commit it, never rotate it - every
+# installed copy only trusts the key it shipped with. See docs/RELEASING.md.
+.tauri/

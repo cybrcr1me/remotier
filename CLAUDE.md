@@ -557,9 +557,46 @@ Two more rules in that script are load-bearing:
   `--draft=false` command; nothing in the automated path makes a release public.
 
 Credentials come from `.env` at the root (`.env.example` documents the four `APPLE_*`
-names), and the script **exits if `.env` is not gitignored**. A warning would be read
-after the commit containing an app-specific password already existed. The environment
-wins over the file, so one value can be overridden for a single run.
+names and the two `TAURI_SIGNING_*` ones), and the script **exits if `.env` is not
+gitignored**. A warning would be read after the commit containing an app-specific password
+already existed. The environment wins over the file, so one value can be overridden for a
+single run.
+
+### Auto updates
+
+`tauri-plugin-updater`, driven from `commands/updates.rs` rather than from its JavaScript
+bindings - the webview asks two commands and never holds permission to download or run an
+installer, the same rule the rest of the app follows. The app polls one static manifest,
+`/releases/latest/download/latest.json`, and `bundle_config.rs` fails if that URL ever
+stops being version-free.
+
+- **The private key lives in `.tauri/` at the repository root, gitignored**, and
+  `check-updater.sh` refuses to build if it is ever tracked or unignored - the same
+  refuse-rather-than-warn rule `.env` follows, and with less room to recover: a key
+  published once is published for good.
+- **The updater key is not the Apple certificate and cannot be replaced by it.** The
+  plugin verifies a download against the public key compiled into the copy already
+  installed, *before* it swaps the app; Gatekeeper's verdict arrives afterwards, at
+  launch, and an AppImage carries no operating-system signature at all. It also cannot be
+  rotated: a copy in the field trusts only the key it shipped with.
+- **`createUpdaterArtifacts` lives in `tauri.updater.conf.json`**, passed as `--config` by
+  the two release builds. In the main config it would make an ordinary unsigned
+  `bun run tauri build` fail for want of a private key.
+- **Nothing installs itself.** An update restarts the app and ends every SSH session it
+  holds, so the check is automatic and the button is not. `updates.autoCheck` is local by
+  design - whether a machine may replace its own binary is that machine's business.
+- **The macOS payload is tarred by `build-mac.sh` after stapling**, not taken from the
+  bundler, and unpacked again to confirm the signature and the ticket survived. The
+  updater installs whatever is inside that tarball, and an unnotarised one fails on the
+  user's machine at the next launch and nowhere else.
+- **`latest.json` is written by both halves and merged**, in
+  `scripts/updater-manifest.mjs`, which keeps the other half's platforms only when the
+  file already there names this same version. A leftover from an earlier release would
+  otherwise advertise last month's download under this month's version. CI merges from a
+  job of its own: two matrix jobs writing one file race, and the loser's platform vanishes.
+- The URLs inside the manifest point at the **tag**, not at `latest`, which moves the
+  moment the next release is published - between a client reading the manifest and
+  fetching what it named.
 
 ### Brand artwork
 
@@ -849,6 +886,19 @@ A stored name goes stale the moment tabs merge or a pane is dragged in, leaving 
 advertising whichever host happened to be the drop target. Repeats are counted rather than
 repeated (`terminal.shop ×2`), because two shells on one host is the normal way to work.
 Nothing renames a tab on connect for the same reason.
+
+### Marking the pane that has the keyboard
+
+A split tab outlines its active pane in lime, `SplitView` drawing it with `inset-ring`.
+Two details there are deliberate:
+
+- **Inset, not a ring around the pane.** A splitter panel clips its children, so an outer
+  ring is cut in half on whichever side touches the group's edge and whole elsewhere -
+  which reads as two different highlights rather than one convention.
+- **Only when the tab is split** (`tabIsSplit`). A lone pane obviously has the keyboard,
+  and marking it anyway spends the view's one lime element saying nothing. This is why
+  `split` is threaded down the recursion rather than derived per node: only the root knows
+  how many panes the tab holds.
 
 ## Knowing a session is dead
 

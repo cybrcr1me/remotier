@@ -18,6 +18,10 @@
 #   APPLE_PASSWORD          an app-specific password, not the account password
 #   APPLE_TEAM_ID           the 10-character team identifier
 #
+# For the updater (optional here; without it this release offers Mac users no update):
+#   TAURI_SIGNING_PRIVATE_KEY           the updater key, or the path to it
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  its password
+#
 # Flags:
 #   --list-identities  print the signing identities in this keychain and stop
 #   --no-upload        build and verify, but do not attach the DMG to the release
@@ -42,7 +46,8 @@ if [ -f "$root/.env" ]; then
   # `APPLE_SIGNING_IDENTITY=... bun run build:mac` overrides the file rather than being
   # silently replaced by it. Held one by one rather than by restoring a dump of the whole
   # environment, which trips over any readonly variable in it.
-  for var in APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+  for var in APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID \
+             TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD; do
     eval "held_$var=\${$var:-}"
   done
 
@@ -52,7 +57,8 @@ if [ -f "$root/.env" ]; then
   . "$root/.env"
   set +a
 
-  for var in APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+  for var in APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID \
+             TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD; do
     held="held_$var"
     if [ -n "${!held}" ]; then
       export "$var=${!held}"
@@ -108,6 +114,21 @@ done
 if [ "$notarise" = 0 ]; then
   echo "note: APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID not all set - signing without" \
        "notarising, so Gatekeeper will still warn on another machine." >&2
+fi
+
+# The in-app updater is a separate signature from Apple's, over a tarball of the finished
+# app. Optional here for the same reason notarisation is - a build worth having while
+# testing - but a published release without it leaves every Mac copy checking for updates
+# and never being offered one.
+updater=1
+if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+  updater=0
+  echo "note: TAURI_SIGNING_PRIVATE_KEY is not set - this build will not be offered to" \
+       "Macs as an update. See docs/RELEASING.md." >&2
+else
+  # Also checks the public key is in the config: the binary being built here is the one
+  # that will verify next year's update, and it can only use the key it shipped with.
+  scripts/check-updater.sh
 fi
 
 # The DMG step drives Finder over AppleScript to lay the window out, and fails with
@@ -168,6 +189,46 @@ if [ "$notarise" = 1 ]; then
   xcrun stapler validate "$dmg"
 fi
 
+archive=""
+if [ "$updater" = 1 ]; then
+  echo
+  echo "Packing the updater payload"
+  archive="$out/macos/Remotier.app.tar.gz"
+  rm -f "$archive" "$archive.sig"
+
+  # Packed here rather than taken from the bundler, and packed *after* stapling: the
+  # updater replaces the installed app with whatever is inside this tarball, so it has to
+  # hold the notarised bundle rather than whichever state the bundler happened to tar.
+  tar -czf "$archive" -C "$out/macos" Remotier.app
+
+  # `tauri build` takes either a path or the key itself in TAURI_SIGNING_PRIVATE_KEY;
+  # `signer sign` has a separate flag for each and prompts when given neither, which in a
+  # script is a hang rather than an error. Both forms are passed explicitly, password
+  # included, so it never asks.
+  key_args=(-k "$TAURI_SIGNING_PRIVATE_KEY")
+  if [ -f "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+    key_args=(-f "$TAURI_SIGNING_PRIVATE_KEY")
+  fi
+  bun run tauri signer sign \
+    "${key_args[@]}" -p "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" "$archive" >/dev/null
+  if [ ! -f "$archive.sig" ]; then
+    echo "tauri signer sign produced no $archive.sig" >&2
+    exit 1
+  fi
+
+  # Unpacked again and checked. A tar that lost the signature or the ticket would fail
+  # only on the machine that installed the update, long after anyone was watching.
+  scratch=$(mktemp -d)
+  trap 'rm -rf "$scratch"' EXIT
+  tar -xzf "$archive" -C "$scratch"
+  codesign --verify --deep --strict "$scratch/Remotier.app"
+  if [ "$notarise" = 1 ]; then
+    xcrun stapler validate "$scratch/Remotier.app"
+  fi
+  rm -rf "$scratch"
+  trap - EXIT
+fi
+
 # The website links to /releases/latest/download/Remotier.dmg, which GitHub resolves by
 # filename and not by version, so the asset has to carry the same name in every release.
 # Copied after stapling, because stapling writes the ticket into the file itself and a
@@ -180,6 +241,9 @@ echo "Built ${version}:"
 echo "  $app"
 echo "  $dmg"
 echo "  $asset  (what is published)"
+if [ "$updater" = 1 ]; then
+  echo "  $archive  (what the in-app updater downloads)"
+fi
 
 tag="v${version}"
 
@@ -187,6 +251,10 @@ if [ "$upload" = 0 ]; then
   echo
   echo "Not uploading (--no-upload). To attach it later:"
   echo "  gh release upload $tag \"$asset\""
+  if [ "$updater" = 1 ]; then
+    echo "  ...and re-run without --no-upload to publish the updater manifest, which has"
+    echo "  to be merged with the copy CI wrote rather than uploaded on its own."
+  fi
   exit 0
 fi
 
@@ -213,6 +281,31 @@ echo
 echo "Uploading to $tag"
 # --clobber so a rebuild replaces the asset rather than failing on the name.
 gh release upload "$tag" "$asset" --clobber
+
+if [ "$updater" = 1 ]; then
+  gh release upload "$tag" "$archive" "$archive.sig" --clobber
+
+  # The manifest is written twice - once by CI for Windows and Linux, once here - so the
+  # copy already on the release is fetched and added to rather than replaced. Whichever
+  # half runs second keeps the other's platforms; see scripts/updater-manifest.mjs.
+  work=$(mktemp -d)
+  trap 'rm -rf "$work"' EXIT
+  gh release download "$tag" --pattern latest.json --dir "$work" >/dev/null 2>&1 || true
+
+  node scripts/updater-manifest.mjs \
+    --version "$version" \
+    --tag "$tag" \
+    --merge "$work/latest.json" \
+    --out "$work/merged.json" \
+    --entry "darwin-aarch64,Remotier.app.tar.gz,$archive.sig" \
+    --entry "darwin-x86_64,Remotier.app.tar.gz,$archive.sig"
+
+  # One universal build serves both architectures, so both keys name the same file.
+  mv "$work/merged.json" "$work/latest.json"
+  gh release upload "$tag" "$work/latest.json" --clobber
+  rm -rf "$work"
+  trap - EXIT
+fi
 
 echo
 echo "Attached. The release is still a draft - publish it when the assets look right:"

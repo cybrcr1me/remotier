@@ -35,6 +35,14 @@ mod tests {
     }
 
     #[test]
+    fn the_update_preference_stays_local() {
+        // Whether a machine may replace its own binary is that machine's business: a
+        // locked-down work laptop and a personal desktop can hold the same account and
+        // disagree about it.
+        assert!(!is_syncable("updates.autoCheck"));
+    }
+
+    #[test]
     fn an_unknown_setting_stays_local() {
         assert!(!is_syncable("something.addedLater"));
     }

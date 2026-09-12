@@ -88,6 +88,41 @@ fn the_csp_is_set_and_does_not_allow_remote_code() {
 }
 
 #[test]
+fn the_updater_polls_a_url_with_no_version_in_it() {
+    let conf = config();
+    let endpoints = conf["plugins"]["updater"]["endpoints"]
+        .as_array()
+        .expect("plugins.updater.endpoints");
+
+    let endpoint = endpoints[0].as_str().unwrap();
+
+    // Every already-installed copy asks this URL and only this URL. GitHub resolves
+    // `latest/download` by filename, so the manifest keeps its name while the version
+    // moves; changing the shape of this strands every copy already out there.
+    assert!(
+        endpoint.ends_with("/releases/latest/download/latest.json"),
+        "{endpoint} is not the static manifest URL the release scripts publish"
+    );
+}
+
+#[test]
+fn updater_artifacts_are_left_to_the_release_config() {
+    // `createUpdaterArtifacts` needs a signing key, and having it in the main config would
+    // mean an ordinary unsigned `bun run tauri build` failed on a developer machine. The
+    // release workflow and build-mac.sh turn it on with the overlay instead.
+    let conf = config();
+    assert!(
+        conf["bundle"]["createUpdaterArtifacts"].is_null(),
+        "the main config must not demand a signing key"
+    );
+
+    let raw = std::fs::read_to_string("tauri.updater.conf.json")
+        .expect("src-tauri/tauri.updater.conf.json, passed as --config by the release build");
+    let overlay: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(overlay["bundle"]["createUpdaterArtifacts"], serde_json::json!(true));
+}
+
+#[test]
 fn bundle_targets_cover_every_supported_platform() {
     let conf = config();
     let targets: Vec<&str> = conf["bundle"]["targets"]

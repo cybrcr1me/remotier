@@ -191,6 +191,27 @@ describe('pane lifetime', () => {
   })
 })
 
+describe('the active pane', () => {
+  const split = readFileSync(join(SRC, 'components/terminal/SplitView.vue'), 'utf8')
+
+  it('is outlined from the inside', () => {
+    // A splitter panel clips its children, so a ring drawn around the pane is cut in half
+    // on whichever side touches the group's edge. `inset-ring` is drawn within the pane's
+    // own box and survives that.
+    expect(split).toMatch(/inset-ring-1 inset-ring-primary/)
+    expect(split).not.toMatch(/\bring-1 ring-/)
+  })
+
+  it('is marked only while the tab is split', () => {
+    // A tab with one pane has nothing to disambiguate, and an accent on it would spend
+    // the view's single lime element saying what is already obvious.
+    expect(split).toMatch(/props\.split && props\.node\.id === props\.activePaneId/)
+
+    const view = readFileSync(join(SRC, 'views/TerminalsView.vue'), 'utf8')
+    expect(view).toMatch(/:split="tabIsSplit\(tab\.layout\)"/)
+  })
+})
+
 describe('tab dragging', () => {
   it('does not make a tab active on mousedown', () => {
     // Focusing on mousedown puts the tab's own panes on screen before its drag begins,

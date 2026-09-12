@@ -24,7 +24,10 @@ pub fn run() {
                     let _ = window.set_focus();
                 }
             }))
-            .plugin(tauri_plugin_window_state::Builder::default().build());
+            .plugin(tauri_plugin_window_state::Builder::default().build())
+            // Registered for its Rust side only: `commands::updates` drives it, so the
+            // webview never gets permission to download or run an installer.
+            .plugin(tauri_plugin_updater::Builder::new().build());
     }
 
     builder
@@ -118,6 +121,8 @@ pub fn run() {
             commands::vars::list_var_values,
             commands::vars::set_var_value,
             commands::vars::clear_var_value,
+            commands::updates::update_check,
+            commands::updates::update_install,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
