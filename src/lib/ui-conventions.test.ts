@@ -217,6 +217,23 @@ describe('hosts breadcrumb', () => {
   })
 })
 
+describe('devDependencies', () => {
+  it('declares what the config and the scripts import', () => {
+    // Both of these went missing from package.json while staying in the lockfile, which
+    // surfaced in CI as `bun install --frozen-lockfile` refusing to run and naming
+    // neither package. Nothing else notices: happy-dom is named as a string in
+    // vite.config.ts, and wawoff2 is imported by a script no CI job runs, so the brand
+    // build would have broken silently the next time someone regenerated the icon.
+    const pkg = JSON.parse(readFileSync(join(SRC, '../package.json'), 'utf8'))
+    const dev = Object.keys(pkg.devDependencies as Record<string, string>)
+
+    // The vitest environment, named in vite.config.ts.
+    expect(dev).toContain('happy-dom')
+    // scripts/outline-brand-svg.js expands the variable woff2 before instancing it.
+    expect(dev).toContain('wawoff2')
+  })
+})
+
 describe('toasts', () => {
   it('imports the stylesheet vue-sonner needs to render at all', () => {
     // Without it a toast has no surface, no position and no stacking: it lands as bare
