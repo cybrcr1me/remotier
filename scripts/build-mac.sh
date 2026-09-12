@@ -168,17 +168,25 @@ if [ "$notarise" = 1 ]; then
   xcrun stapler validate "$dmg"
 fi
 
+# The website links to /releases/latest/download/Remotier.dmg, which GitHub resolves by
+# filename and not by version, so the asset has to carry the same name in every release.
+# Copied after stapling, because stapling writes the ticket into the file itself and a
+# copy taken before it would be an unnotarised download.
+asset="$out/dmg/Remotier.dmg"
+cp "$dmg" "$asset"
+
 echo
 echo "Built ${version}:"
 echo "  $app"
 echo "  $dmg"
+echo "  $asset  (what is published)"
 
 tag="v${version}"
 
 if [ "$upload" = 0 ]; then
   echo
   echo "Not uploading (--no-upload). To attach it later:"
-  echo "  gh release upload $tag \"$dmg\""
+  echo "  gh release upload $tag \"$asset\""
   exit 0
 fi
 
@@ -186,7 +194,7 @@ if ! command -v gh >/dev/null; then
   echo
   echo "gh is not installed, so the DMG was not uploaded. Install it (brew install gh)" >&2
   echo "or attach the file by hand:" >&2
-  echo "  gh release upload $tag \"$dmg\"" >&2
+  echo "  gh release upload $tag \"$asset\"" >&2
   exit 1
 fi
 
@@ -197,14 +205,14 @@ if ! gh release view "$tag" >/dev/null 2>&1; then
   echo
   echo "No release exists for $tag yet. It is created by the release workflow the tag" >&2
   echo "starts; wait for that to finish, then re-run with --no-upload skipped, or:" >&2
-  echo "  gh release upload $tag \"$dmg\"" >&2
+  echo "  gh release upload $tag \"$asset\"" >&2
   exit 1
 fi
 
 echo
 echo "Uploading to $tag"
 # --clobber so a rebuild replaces the asset rather than failing on the name.
-gh release upload "$tag" "$dmg" --clobber
+gh release upload "$tag" "$asset" --clobber
 
 echo
 echo "Attached. The release is still a draft - publish it when the assets look right:"

@@ -13,11 +13,11 @@ published with no Mac download.
 1. Bump the version in `package.json`, `src-tauri/Cargo.toml` and
    `src-tauri/tauri.conf.json`. They must match: `bun run check:version`.
 2. Commit, then tag: `git tag v0.1.0 && git push origin v0.1.0`.
-3. The `release` workflow checks the tag against the manifests, builds Windows and Linux,
-   and opens a **draft** release.
+3. The `release` workflow checks the tag against the manifests, opens a **draft** release,
+   builds Windows and Linux, and attaches them under their published names.
 4. On the Mac, once CI has opened the draft: `bun run build:mac`. It builds, signs,
    notarises, verifies and attaches the DMG to that draft.
-5. Check the assets, then publish:
+5. Check that all four assets are there under the names below, then publish:
 
    ```bash
    gh release view v0.1.0 --web
@@ -44,13 +44,35 @@ already exported wins over the file, so a one-off can override a single value.
 Nothing in `.env` reaches the app: Vite only exposes `VITE_`-prefixed variables to the
 frontend bundle, and the Rust side never reads these.
 
-## Bundles produced
+## Published asset names
 
-| Platform | Artifacts | Built by |
+The website links straight at the newest build:
+
+```
+https://github.com/cybrcr1me/remotier/releases/latest/download/Remotier.dmg
+https://github.com/cybrcr1me/remotier/releases/latest/download/Remotier-setup.exe
+https://github.com/cybrcr1me/remotier/releases/latest/download/Remotier.AppImage
+https://github.com/cybrcr1me/remotier/releases/latest/download/Remotier.deb
+```
+
+GitHub resolves that path **by filename, not by version**, so every release has to publish
+these exact four names. Tauri's own output is version-stamped
+(`Remotier_0.1.0-beta2_amd64.AppImage`), so both halves of the release rename before
+uploading - the workflow in its "Collect the bundles" step, `build-mac.sh` by copying the
+stapled DMG to `Remotier.dmg`. **Renaming an asset breaks every download link on the
+site**, so treat these as a published interface.
+
+The workflow fails if a glob matches anything other than exactly one file, rather than
+publishing a release one asset short - a missing file here is a dead download button, and
+nothing else would notice.
+
+| Platform | Published as | Built by |
 | --- | --- | --- |
-| macOS | `.app`, `.dmg` (one universal binary) | `bun run build:mac`, by hand |
-| Windows | NSIS `.exe` installer | the `release` workflow |
-| Linux | `.deb`, `.AppImage` | the `release` workflow |
+| macOS | `Remotier.dmg` (universal) | `bun run build:mac`, by hand |
+| Windows | `Remotier-setup.exe` (NSIS) | the `release` workflow |
+| Linux | `Remotier.AppImage`, `Remotier.deb` | the `release` workflow |
+
+The version is on the release itself, not in the filenames.
 
 ## The macOS build
 

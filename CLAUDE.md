@@ -538,6 +538,16 @@ the `.app`; the script submits and staples the **DMG** as well, since that is wh
 download, and a ticket that is issued but not stapled fails only on a machine that is
 offline - the worst place to find out.
 
+**The published filenames are an interface.** The site links to
+`/releases/latest/download/Remotier.dmg` and the three siblings
+(`Remotier-setup.exe`, `Remotier.AppImage`, `Remotier.deb`); GitHub resolves that path by
+filename, not by version, so every release publishes those exact names and the version
+lives only on the release. Tauri stamps its output with the version, so both halves rename
+before uploading - the workflow in its collect step, the Mac script by copying the
+**stapled** DMG (a copy taken before stapling would be an unnotarised download). The
+workflow fails when a glob matches anything but exactly one file: a release published one
+asset short is a dead download button on the site and nothing else notices.
+
 Two more rules in that script are load-bearing:
 
 - **It uploads into the release CI made; it never creates one.** `gh release create` here

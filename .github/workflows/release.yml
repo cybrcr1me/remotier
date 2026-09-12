@@ -6,6 +6,15 @@ on:
   # Lets a release be built without tagging, e.g. to check the bundles still produce.
   workflow_dispatch:
 
+# The download links on the website are version-free
+# (/releases/latest/download/Remotier.dmg), which GitHub resolves by *filename*, not by
+# version. So every release has to publish these exact names, and Tauri's own output -
+# Remotier_0.1.0-beta2_amd64.AppImage - cannot be uploaded as it stands.
+env:
+  LINUX_APPIMAGE: Remotier.AppImage
+  LINUX_DEB: Remotier.deb
+  WINDOWS_SETUP: Remotier-setup.exe
+
 jobs:
   # Fails the release before an hour of build time, not after: a tag whose version does
   # not match the three manifests produces installers that lie about what they are.
@@ -21,8 +30,40 @@ jobs:
             scripts/check-version.sh
           fi
 
-  build:
+  # Created here rather than by the build jobs, which would race each other to create the
+  # same release and would leave the macOS build with nothing to upload into until one of
+  # them finished.
+  draft:
     needs: version
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Open the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "$TAG already has a release; leaving it alone"
+            exit 0
+          fi
+          # Draft on purpose: macOS is built by hand (`bun run build:mac`) because GitHub
+          # bills macOS runners at ten times the Linux rate, and publishing before that
+          # lands would ship a version with no Mac download.
+          printf '%s\n\n%s\n' \
+            'See the assets below to download and install this version.' \
+            'The macOS build is signed on a developer machine and uploaded to this draft before it is published.' \
+            > notes.md
+          gh release create "$TAG" --draft --title "Remotier $TAG" --notes-file notes.md
+
+  build:
+    needs: [version, draft]
+    # `always()` because `draft` is skipped on a manual run, which would otherwise skip
+    # this too - and a manual run exists precisely to check that the bundles still build.
+    if: always() && needs.version.result == 'success'
     permissions:
       contents: write
 
@@ -63,21 +104,56 @@ jobs:
           bun-version: latest
       - run: bun install --frozen-lockfile
 
+      # Builds only. The release is created above and the assets are attached below,
+      # because this action uploads Tauri's version-stamped filenames and the download
+      # links need stable ones.
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Windows signing is not configured. Until it is, SmartScreen warns until the
           # binary builds reputation; see docs/RELEASING.md.
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: Remotier ${{ github.ref_name }}
-          releaseBody: |
-            See the assets below to download and install this version.
 
-            The macOS build is signed on a developer machine and uploaded to this draft
-            before it is published.
-          # Draft on purpose. macOS is built by hand (`bun run build:mac`) because GitHub
-          # bills macOS runners at ten times the Linux rate, and a release published
-          # without waiting for it would ship with no Mac download at all.
-          releaseDraft: true
-          prerelease: false
+      - name: Collect the bundles under their published names
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Without this a glob that matches nothing expands to itself, so the count
+          # below sees one "file" and the failure surfaces as a confusing cp error.
+          shopt -s nullglob
+          mkdir -p upload
+          bundle=src-tauri/target/release/bundle
+
+          # A glob that matched nothing, or matched twice, has to fail here rather than
+          # silently publish one asset short: the website links to these names directly.
+          copy_one() {
+            local pattern="$1" dest="$2"
+            # shellcheck disable=SC2206
+            local matches=($pattern)
+            if [ "${#matches[@]}" -ne 1 ]; then
+              echo "expected exactly one file matching $pattern, found ${#matches[@]}" >&2
+              exit 1
+            fi
+            cp "${matches[0]}" "upload/$dest"
+          }
+
+          case "${{ runner.os }}" in
+            Linux)
+              copy_one "$bundle/appimage/*.AppImage" "$LINUX_APPIMAGE"
+              copy_one "$bundle/deb/*.deb" "$LINUX_DEB"
+              ;;
+            Windows)
+              copy_one "$bundle/nsis/*-setup.exe" "$WINDOWS_SETUP"
+              ;;
+          esac
+
+          ls -l upload
+
+      - name: Attach them to the release
+        if: github.ref_type == 'tag'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        # --clobber so re-running the workflow replaces the asset instead of failing on
+        # the name, which is the whole point of the names being stable.
+        run: gh release upload "$TAG" upload/* --clobber
