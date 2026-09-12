@@ -14,7 +14,7 @@ use remotier_lib::db::{new_id, now_ms, Db};
 fn data_dir() -> std::path::PathBuf {
     dirs::data_dir()
         .expect("a data directory")
-        .join("de.flexusma.remotier")
+        .join("app.remotier.app")
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

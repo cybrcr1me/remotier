@@ -1,9 +1,9 @@
 [package]
 name = "remotier"
-version = "0.1.0"
+version = "0.1.0-beta2"
 description = "Local-first SSH client"
-authors = ["Flexusma"]
-license = "MIT"
+authors = ["Eric Jaquome", "Lucas Regh"]
+license = "copyright"
 repository = ""
 edition = "2021"
 # Raised from 1.82 by remotier-sync-proto: edition 2024 is in that dependency graph and

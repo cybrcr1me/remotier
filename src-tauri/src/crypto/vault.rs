@@ -19,7 +19,7 @@ use zeroize::Zeroizing;
 
 use crate::error::{Error, Result};
 
-const KEYCHAIN_SERVICE: &str = "de.flexusma.remotier";
+const KEYCHAIN_SERVICE: &str = "app.remotier.app";
 const KEYCHAIN_ACCOUNT: &str = "vault-dek";
 const KEY_LEN: usize = 32;
 
