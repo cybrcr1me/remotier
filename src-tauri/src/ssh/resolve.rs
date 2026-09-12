@@ -1,0 +1,537 @@
+//! Turns a stored host into everything needed to dial it.
+//!
+//! This is where inheritance and placeholders are applied: a host inherits port,
+//! identity and jump host from its group chain, and `{{placeholders}}` in the hostname
+//! and username are filled from the variable scopes.
+
+use std::collections::HashMap;
+
+use rusqlite::params;
+use serde::Serialize;
+use zeroize::Zeroizing;
+
+use crate::commands::secrets;
+use crate::crypto::vault::Vault;
+use crate::db::models::{AuthKind, Group, Host, KeySource};
+use crate::db::{query_all, query_one, Db};
+use crate::error::{Error, Result};
+use crate::vars;
+
+pub const DEFAULT_PORT: u16 = 22;
+pub const DEFAULT_TERM: &str = "xterm-256color";
+
+/// Credentials for one connection. Secrets are zeroized when this is dropped.
+pub enum AuthMaterial {
+    /// `None` means no secret is stored. The connection is attempted anyway and the user
+    /// is only asked if the server actually refuses.
+    Password(Option<Zeroizing<String>>),
+    /// A private key held in the vault.
+    Key {
+        pem: Zeroizing<String>,
+        passphrase: Option<Zeroizing<String>>,
+    },
+    /// A key left on disk, read at connect time and never copied.
+    KeyPath {
+        path: String,
+        passphrase: Option<Zeroizing<String>>,
+    },
+    Agent {
+        /// Restrict to this public key when the identity names one.
+        public_openssh: Option<String>,
+        /// Agent to talk to, overriding `SSH_AUTH_SOCK`. See `AGENT_SOCKET_SETTING`.
+        socket: Option<String>,
+    },
+    Interactive(Option<Zeroizing<String>>),
+}
+
+pub struct Target {
+    /// The ssh-agent to use, when one is configured.
+    pub agent_socket: Option<String>,
+    /// A security key's PIN, supplied only after the token asked for one. Never stored.
+    pub pin: Option<Zeroizing<String>>,
+    /// A password the user typed at a prompt. Kept even when the host authenticates with a
+    /// key, so a rejected key can fall back to it the way OpenSSH does.
+    pub typed_password: Option<Zeroizing<String>>,
+    pub host_id: String,
+    pub label: String,
+    pub hostname: String,
+    pub port: u16,
+    pub username: String,
+    pub auth: AuthMaterial,
+}
+
+/// The safe-to-show half of a resolution, for previews in the UI.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TargetPreview {
+    pub host_id: String,
+    pub label: String,
+    pub hostname: String,
+    pub port: u16,
+    pub username: String,
+    pub auth_kind: AuthKind,
+    pub identity_label: Option<String>,
+    pub key_label: Option<String>,
+    /// Placeholders that still have no value. Non-empty means connecting will fail.
+    pub missing_variables: Vec<String>,
+}
+
+/// Walk from a host's group up to the root. Nearest first.
+fn group_chain(db: &Db, group_id: Option<&str>) -> Result<Vec<Group>> {
+    let mut chain = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut current = group_id.map(str::to_string);
+
+    while let Some(id) = current {
+        // Defends against a cycle introduced by a bad edit; without it this loops forever.
+        if !seen.insert(id.clone()) {
+            break;
+        }
+        let group = db.read(|conn| {
+            let sql = format!("SELECT {} FROM groups WHERE id = ?1", Group::COLUMNS);
+            query_one(conn, &sql, params![id], Group::from_row, "group", &id)
+        })?;
+        current = group.parent_id.clone();
+        chain.push(group);
+    }
+    Ok(chain)
+}
+
+/// The account-wide scope. One account, so there is nothing to point at.
+pub const GLOBAL_SCOPE: &str = "global";
+pub const GLOBAL_SCOPE_ID: &str = "";
+
+/// Collect variable values, weakest scope first so nearer scopes overwrite.
+fn variable_values(db: &Db, host: &Host, chain: &[Group]) -> Result<HashMap<String, String>> {
+    let mut builder = vars::ValueBuilder::new();
+
+    // Declared defaults, weakest scope first: the account, then each group from the root
+    // down, then the host. A nearer scope overwrites a wider one.
+    builder.layer(defaults_for(db, GLOBAL_SCOPE, GLOBAL_SCOPE_ID)?);
+    for group in chain.iter().rev() {
+        builder.layer(defaults_for(db, "group", &group.id)?);
+    }
+    builder.layer(defaults_for(db, "host", &host.id)?);
+
+    // Local answers override declared defaults, same ordering.
+    builder.layer(values_for(db, GLOBAL_SCOPE, GLOBAL_SCOPE_ID)?);
+    for group in chain.iter().rev() {
+        builder.layer(values_for(db, "group", &group.id)?);
+    }
+    builder.layer(values_for(db, "host", &host.id)?);
+
+    builder.with_builtins([
+        ("host".to_string(), host.hostname.clone()),
+        ("group".to_string(), chain.first().map(|g| g.name.clone()).unwrap_or_default()),
+        ("user".to_string(), whoami()),
+    ]);
+
+    Ok(builder.build())
+}
+
+fn whoami() -> String {
+    std::env::var("USER")
+        .or_else(|_| std::env::var("USERNAME"))
+        .unwrap_or_default()
+}
+
+fn defaults_for(db: &Db, scope: &str, scope_id: &str) -> Result<Vec<(String, String)>> {
+    db.read(|conn| {
+        query_all(
+            conn,
+            "SELECT name, default_value FROM var_defs
+             WHERE scope = ?1 AND scope_id = ?2 AND default_value IS NOT NULL",
+            params![scope, scope_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+    })
+}
+
+fn values_for(db: &Db, scope: &str, scope_id: &str) -> Result<Vec<(String, String)>> {
+    db.read(|conn| {
+        query_all(
+            conn,
+            "SELECT name, value FROM var_values WHERE scope = ?1 AND scope_id = ?2",
+            params![scope, scope_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+    })
+}
+
+struct Resolution {
+    host: Host,
+    port: u16,
+    username: String,
+    hostname: String,
+    identity: Option<IdentityRow>,
+    missing: Vec<String>,
+}
+
+struct IdentityRow {
+    label: String,
+    auth_kind: AuthKind,
+    password_ref: Option<String>,
+    key_id: Option<String>,
+}
+
+fn resolve_common(db: &Db, host_id: &str) -> Result<Resolution> {
+    let host = db.read(|conn| {
+        let sql = format!("SELECT {} FROM hosts WHERE id = ?1", Host::COLUMNS);
+        query_one(conn, &sql, params![host_id], Host::from_row, "host", host_id)
+    })?;
+
+    let chain = group_chain(db, host.group_id.as_deref())?;
+
+    // NULL on the host means inherit, so fall through the chain before the default.
+    let port = host
+        .port
+        .or_else(|| chain.iter().find_map(|g| g.default_port))
+        .unwrap_or(i64::from(DEFAULT_PORT));
+    let port = u16::try_from(port)
+        .map_err(|_| Error::Invalid(format!("port {port} is out of range")))?;
+
+    let identity_id = host
+        .identity_id
+        .clone()
+        .or_else(|| chain.iter().find_map(|g| g.default_identity_id.clone()));
+
+    let identity = match identity_id.clone() {
+        Some(id) => db.read(|conn| {
+            query_one(
+                conn,
+                "SELECT label, auth_kind, password_ref, key_id FROM identities WHERE id = ?1",
+                params![id],
+                |row| {
+                    let auth_kind: String = row.get(1)?;
+                    Ok(IdentityRow {
+                        label: row.get(0)?,
+                        auth_kind: AuthKind::parse(&auth_kind),
+                        password_ref: row.get(2)?,
+                        key_id: row.get(3)?,
+                    })
+                },
+                "identity",
+                &id,
+            )
+        })
+        .map(Some)?,
+        None => None,
+    };
+
+    let values = variable_values(db, &host, &chain)?;
+
+    // A username set on the host wins over the identity's, so a one-off server can be
+    // reached without inventing an identity for it. Both may contain placeholders.
+    let raw_username = match host.username.clone().filter(|u| !u.trim().is_empty()) {
+        Some(username) => username,
+        None => db.read(|conn| match identity_id.as_deref() {
+            Some(id) => query_one(
+                conn,
+                "SELECT username FROM identities WHERE id = ?1",
+                params![id],
+                |row| Ok(row.get::<_, String>(0)?),
+                "identity",
+                id,
+            ),
+            None => Ok(whoami()),
+        })?,
+    };
+
+    let mut missing = vars::missing(&host.hostname, &values);
+    missing.extend(vars::missing(&raw_username, &values));
+    missing.sort();
+    missing.dedup();
+
+    let hostname = vars::render(&host.hostname, &values).unwrap_or_else(|_| host.hostname.clone());
+    let username = vars::render(&raw_username, &values).unwrap_or(raw_username);
+
+    Ok(Resolution {
+        host,
+        port,
+        username,
+        hostname,
+        identity,
+        missing,
+    })
+}
+
+/// Resolve without touching the vault - safe to call for UI previews.
+pub fn preview(db: &Db, host_id: &str) -> Result<TargetPreview> {
+    let resolution = resolve_common(db, host_id)?;
+
+    let key_label = match resolution.identity.as_ref().and_then(|i| i.key_id.clone()) {
+        Some(key_id) => db
+            .read(|conn| {
+                query_one(
+                    conn,
+                    "SELECT label FROM keys WHERE id = ?1",
+                    params![key_id],
+                    |row| Ok(row.get::<_, String>(0)?),
+                    "key",
+                    &key_id,
+                )
+            })
+            .ok(),
+        None => None,
+    };
+
+    // Credentials on the host itself take precedence over the inherited identity.
+    let host_auth = resolution.host.auth_kind;
+    let key_label = match resolution.host.key_id.clone() {
+        Some(key_id) if host_auth.is_some() => db
+            .read(|conn| {
+                query_one(
+                    conn,
+                    "SELECT label FROM keys WHERE id = ?1",
+                    params![key_id],
+                    |row| Ok(row.get::<_, String>(0)?),
+                    "key",
+                    &key_id,
+                )
+            })
+            .ok(),
+        _ => key_label,
+    };
+
+    Ok(TargetPreview {
+        host_id: resolution.host.id,
+        label: resolution.host.label,
+        hostname: resolution.hostname,
+        port: resolution.port,
+        username: resolution.username,
+        auth_kind: host_auth.unwrap_or_else(|| {
+            resolution
+                .identity
+                .as_ref()
+                .map_or(AuthKind::Agent, |i| i.auth_kind)
+        }),
+        identity_label: if host_auth.is_some() {
+            // Say plainly that the host is not using an identity at all.
+            None
+        } else {
+            resolution.identity.map(|i| i.label)
+        },
+        key_label,
+        missing_variables: resolution.missing,
+    })
+}
+
+/// Full resolution including credentials.
+///
+/// # Errors
+///
+/// [`Error::UnresolvedVariables`] when a placeholder has no value, so the UI can collect
+/// them before a connection is attempted rather than after it fails to authenticate.
+/// Settings key naming the ssh-agent to talk to. Empty means `SSH_AUTH_SOCK`.
+pub const AGENT_SOCKET_SETTING: &str = "ssh.agentSocket";
+
+/// The configured agent socket, or `None` to use the environment's.
+pub fn agent_socket(db: &Db) -> Result<Option<String>> {
+    let rows: Vec<String> = db.read(|conn| {
+        query_all(
+            conn,
+            "SELECT value FROM settings WHERE key = ?1",
+            [AGENT_SOCKET_SETTING],
+            |row| row.get(0).map_err(Into::into),
+        )
+    })?;
+
+    Ok(rows
+        .into_iter()
+        .next()
+        .filter(|path| !path.trim().is_empty()))
+}
+
+/// Point an agent method at the configured socket.
+///
+/// Done in one place rather than at each constructor: which agent to talk to is a property
+/// of this machine, not of the identity that chose agent authentication.
+fn with_agent_socket(auth: AuthMaterial, db: &Db) -> Result<AuthMaterial> {
+    match auth {
+        AuthMaterial::Agent {
+            public_openssh,
+            socket: None,
+        } => Ok(AuthMaterial::Agent {
+            public_openssh,
+            socket: agent_socket(db)?,
+        }),
+        other => Ok(other),
+    }
+}
+
+pub fn target(
+    db: &Db,
+    vault: &Vault,
+    host_id: &str,
+    supplied_password: Option<&str>,
+    supplied_pin: Option<&str>,
+) -> Result<Target> {
+    let resolution = resolve_common(db, host_id)?;
+
+    if !resolution.missing.is_empty() {
+        return Err(Error::UnresolvedVariables(resolution.missing));
+    }
+
+    // Credentials set directly on the host win outright.
+    if let Some(auth_kind) = resolution.host.auth_kind {
+        let auth = host_auth_material(db, vault, &resolution.host, auth_kind, supplied_password)?;
+        let auth = with_agent_socket(auth, db)?;
+        return Ok(Target {
+            agent_socket: agent_socket(db)?,
+            pin: supplied_pin.map(|p| Zeroizing::new(p.to_string())),
+            typed_password: supplied_password.map(|p| Zeroizing::new(p.to_string())),
+            host_id: resolution.host.id,
+            label: resolution.host.label,
+            hostname: resolution.hostname,
+            port: resolution.port,
+            username: resolution.username,
+            auth,
+        });
+    }
+
+    let auth = match &resolution.identity {
+        // No identity configured: the agent is the only thing we can try.
+        None => AuthMaterial::Agent { public_openssh: None, socket: None },
+        Some(identity) => {
+            let password = match &identity.password_ref {
+                Some(reference) => Some(db.read(|conn| secrets::get(conn, vault, reference))?),
+                None => None,
+            };
+
+            match identity.auth_kind {
+                // A missing password is not an error here: the connection is tried
+                // first, and only a refusal from the server prompts the user.
+                AuthKind::Password => AuthMaterial::Password(
+                    password.or_else(|| supplied_password.map(|p| Zeroizing::new(p.to_string()))),
+                ),
+                AuthKind::Interactive => AuthMaterial::Interactive(
+                    password.or_else(|| supplied_password.map(|p| Zeroizing::new(p.to_string()))),
+                ),
+                AuthKind::Agent => AuthMaterial::Agent {
+                    socket: None,
+                    public_openssh: key_public(db, identity.key_id.as_deref())?,
+                },
+                AuthKind::Key => key_material(db, vault, identity.key_id.as_deref())?,
+            }
+        }
+    };
+
+    let auth = with_agent_socket(auth, db)?;
+
+    Ok(Target {
+        agent_socket: agent_socket(db)?,
+        pin: supplied_pin.map(|p| Zeroizing::new(p.to_string())),
+        typed_password: supplied_password.map(|p| Zeroizing::new(p.to_string())),
+        host_id: resolution.host.id,
+        label: resolution.host.label,
+        hostname: resolution.hostname,
+        port: resolution.port,
+        username: resolution.username,
+        auth,
+    })
+}
+
+/// Build credentials from the fields stored on the host itself.
+fn host_auth_material(
+    db: &Db,
+    vault: &Vault,
+    host: &Host,
+    auth_kind: AuthKind,
+    supplied_password: Option<&str>,
+) -> Result<AuthMaterial> {
+    let password = match host_password_ref(db, &host.id)? {
+        Some(reference) => Some(db.read(|conn| secrets::get(conn, vault, &reference))?),
+        None => None,
+    };
+
+    match auth_kind {
+        // As above: try first, ask only if the server refuses.
+        AuthKind::Password => Ok(AuthMaterial::Password(
+            password.or_else(|| supplied_password.map(|p| Zeroizing::new(p.to_string()))),
+        )),
+        AuthKind::Interactive => Ok(AuthMaterial::Interactive(
+            password.or_else(|| supplied_password.map(|p| Zeroizing::new(p.to_string()))),
+        )),
+        AuthKind::Agent => Ok(AuthMaterial::Agent {
+            socket: None,
+            public_openssh: key_public(db, host.key_id.as_deref())?,
+        }),
+        AuthKind::Key => key_material(db, vault, host.key_id.as_deref()),
+    }
+}
+
+fn host_password_ref(db: &Db, host_id: &str) -> Result<Option<String>> {
+    db.read(|conn| {
+        Ok(conn
+            .query_row(
+                "SELECT password_ref FROM hosts WHERE id = ?1",
+                params![host_id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .ok()
+            .flatten())
+    })
+}
+
+fn key_public(db: &Db, key_id: Option<&str>) -> Result<Option<String>> {
+    let Some(key_id) = key_id else { return Ok(None) };
+    db.read(|conn| {
+        query_one(
+            conn,
+            "SELECT public_key FROM keys WHERE id = ?1",
+            params![key_id],
+            |row| Ok(row.get::<_, String>(0)?),
+            "key",
+            key_id,
+        )
+    })
+    .map(Some)
+}
+
+fn key_material(db: &Db, vault: &Vault, key_id: Option<&str>) -> Result<AuthMaterial> {
+    let key_id = key_id
+        .ok_or_else(|| Error::Auth("this identity is set to key auth but has no key".into()))?;
+
+    let (source, private_key_ref, path, passphrase_ref) = db.read(|conn| {
+        query_one(
+            conn,
+            "SELECT source, private_key_ref, path, passphrase_ref FROM keys WHERE id = ?1",
+            params![key_id],
+            |row| {
+                let source: String = row.get(0)?;
+                Ok((
+                    KeySource::parse(&source),
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            },
+            "key",
+            key_id,
+        )
+    })?;
+
+    let passphrase = match &passphrase_ref {
+        Some(reference) => Some(db.read(|conn| secrets::get(conn, vault, reference))?),
+        None => None,
+    };
+
+    match source {
+        KeySource::Managed => {
+            let reference = private_key_ref
+                .ok_or_else(|| Error::Auth("this key has no stored private half".into()))?;
+            Ok(AuthMaterial::Key {
+                pem: db.read(|conn| secrets::get(conn, vault, &reference))?,
+                passphrase,
+            })
+        }
+        KeySource::SystemPath => Ok(AuthMaterial::KeyPath {
+            path: path.ok_or_else(|| Error::Auth("this key has no path on disk".into()))?,
+            passphrase,
+        }),
+        KeySource::Agent => Ok(AuthMaterial::Agent {
+            socket: None,
+            public_openssh: key_public(db, Some(key_id))?,
+        }),
+    }
+}

@@ -1,0 +1,154 @@
+/*
+ * The Remotier palette lives in `tokens.css` as `--rm-*`. This file is the only place
+ * those tokens are allowed to meet shadcn's semantic names - components use
+ * `bg-background` / `text-muted-foreground`, never `var(--rm-shell)` directly, so the
+ * standard shadcn component set keeps working unmodified.
+ */
+@import "./tokens.css";
+
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/martian-mono";
+@import "@fontsource-variable/jetbrains-mono";
+
+/*
+ * vue-sonner ships its own stylesheet and does nothing useful without it: the toast has no
+ * surface, no position and no stacking, so it renders as bare text in the normal document
+ * flow. shadcn's `Sonner.vue` only feeds it colour variables - it does not replace this.
+ */
+@import "vue-sonner/style.css";
+
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn-vue/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+    /*
+     * Geist carries the interface. The two monospaced faces are accents only: JetBrains
+     * Mono for anything the shell produced (hostnames, keys, the terminal), Martian Mono
+     * for the wordmark. Setting a mono face as the body font makes ordinary UI text read
+     * as output, so `--font-sans` stays proportional. Point `--font-heading` at
+     * `--font-display` to move every shadcn title onto Martian Mono.
+     */
+    --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, monospace;
+    --font-display: 'Martian Mono Variable', ui-monospace, monospace;
+    --font-heading: var(--font-sans);
+
+    /* `tracking-label` for the 10-11px uppercase labels, `tracking-display` for headings. */
+    --tracking-label: 0.16em;
+    --tracking-display: -0.025em;
+    --tracking-wordmark: -0.035em;
+
+    --color-sidebar-ring: var(--sidebar-ring);
+    --color-sidebar-border: var(--sidebar-border);
+    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+    --color-sidebar-accent: var(--sidebar-accent);
+    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+    --color-sidebar-primary: var(--sidebar-primary);
+    --color-sidebar-foreground: var(--sidebar-foreground);
+    --color-sidebar: var(--sidebar);
+    --color-chart-5: var(--chart-5);
+    --color-chart-4: var(--chart-4);
+    --color-chart-3: var(--chart-3);
+    --color-chart-2: var(--chart-2);
+    --color-chart-1: var(--chart-1);
+    --color-ring: var(--ring);
+    --color-input: var(--input);
+    --color-border: var(--border);
+    --color-destructive: var(--destructive);
+    --color-accent-foreground: var(--accent-foreground);
+    --color-accent: var(--accent);
+    --color-muted-foreground: var(--muted-foreground);
+    --color-muted: var(--muted);
+    --color-secondary-foreground: var(--secondary-foreground);
+    --color-secondary: var(--secondary);
+    --color-primary-foreground: var(--primary-foreground);
+    --color-primary: var(--primary);
+    --color-popover-foreground: var(--popover-foreground);
+    --color-popover: var(--popover);
+    --color-card-foreground: var(--card-foreground);
+    --color-card: var(--card);
+    --color-foreground: var(--foreground);
+    --color-background: var(--background);
+    --radius-sm: calc(var(--radius) - 4px);
+    --radius-md: calc(var(--radius) - 2px);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) + 4px);
+}
+
+@theme {
+    /* 120ms state changes on `cubic-bezier(0.2, 0, 0, 1)`. No spring, no bounce. */
+    --default-transition-duration: var(--rm-dur-state);
+    --default-transition-timing-function: var(--rm-ease);
+    --ease-rm: var(--rm-ease);
+}
+
+/*
+ * Dark only - there is no light theme. `<html class="dark">` stays put because the shadcn
+ * component set carries `dark:` variants; both selectors resolve to the same palette so a
+ * stray unprefixed context cannot fall back to a white background.
+ */
+:root,
+.dark {
+    --background: var(--rm-void);
+    --foreground: var(--rm-bone);
+    --card: var(--rm-shell);
+    --card-foreground: var(--rm-bone);
+    --popover: var(--rm-shell);
+    --popover-foreground: var(--rm-bone);
+    /* Lime is a signal, not a surface: reach for `variant="default"` once per view. */
+    --primary: var(--rm-lime);
+    --primary-foreground: var(--rm-on-lime);
+    /*
+     * `--rm-control`, not `--rm-raised`: raised is the hover/selected surface, one step off
+     * the canvas, so a secondary button filled with it would be invisible on black. Raised
+     * stays where the design puts it - `--muted` and `--accent`, the hover states.
+     */
+    --secondary: var(--rm-control);
+    --secondary-foreground: var(--rm-bone);
+    --muted: var(--rm-raised);
+    --muted-foreground: var(--rm-dim);
+    --accent: var(--rm-raised);
+    --accent-foreground: var(--rm-bone);
+    --destructive: var(--rm-error);
+    --border: var(--rm-rule);
+    --input: var(--rm-control);
+    --ring: var(--rm-lime);
+    --chart-1: var(--rm-lime);
+    --chart-2: var(--rm-warn);
+    --chart-3: var(--rm-error);
+    --chart-4: var(--rm-dim);
+    --chart-5: var(--rm-control);
+    --radius: 0.625rem;
+    --sidebar: var(--rm-shell);
+    --sidebar-foreground: var(--rm-ink-2);
+    --sidebar-primary: var(--rm-lime);
+    --sidebar-primary-foreground: var(--rm-on-lime);
+    --sidebar-accent: var(--rm-raised);
+    --sidebar-accent-foreground: var(--rm-bone);
+    --sidebar-border: var(--rm-rule);
+    --sidebar-ring: var(--rm-lime);
+}
+
+/*
+ * The nova preset stamps `cn-font-heading` onto every generated title (Card, Dialog,
+ * Sheet, Alert, AlertDialog, Empty) but never defines it, so titles silently inherit the
+ * body face. Defining it here is the single point that decides what a heading is set in -
+ * no generated file has to be touched to change it.
+ */
+@utility cn-font-heading {
+  font-family: var(--font-heading);
+  letter-spacing: var(--tracking-display);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+    }
+  body {
+    @apply bg-background text-foreground;
+    @apply font-sans;
+    }
+}

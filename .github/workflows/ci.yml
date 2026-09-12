@@ -1,0 +1,114 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A new push to the same branch makes the previous run pointless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  frontend:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+      - name: Typecheck and build
+        # The build catches template errors that `vue-tsc --noEmit` does not.
+        run: bun run build
+      - run: bun run test
+
+  rust:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf libgtk-3-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # `tauri::generate_context!` reads the frontend dist directory, so it has to exist.
+      - run: mkdir -p dist && touch dist/index.html
+
+      - name: Clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+      - name: Tests
+        # The live SSH tests are #[ignore]d and need a real sshd; see the ssh-live job.
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: No C toolchain dependencies
+        # aws-lc-rs wants CMake and NASM on Windows and openssl-sys a system OpenSSL.
+        # Either would break the cross-platform build, which is why russh and reqwest are
+        # both pinned to ring. A transitive dep can reintroduce one at any time.
+        run: |
+          if cargo tree --manifest-path src-tauri/Cargo.toml --prefix none \
+               | grep -iE '^(aws-lc|openssl-sys)'; then
+            echo "::error::a C-toolchain crate entered the dependency graph"
+            exit 1
+          fi
+
+  ssh-live:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: mkdir -p dist && touch dist/index.html
+
+      - name: Start sshd with the test key
+        # Started here rather than as a service container: the server needs the public
+        # key at startup, and the key does not exist until this step generates it.
+        run: |
+          ssh-keygen -t ed25519 -f /tmp/remotier-testkey -N "" -C ci
+          docker run -d --name remotier-test -p 2222:2222 \
+            -e PASSWORD_ACCESS=true -e USER_NAME=test -e USER_PASSWORD=testpass \
+            -e PUBLIC_KEY="$(cat /tmp/remotier-testkey.pub)" \
+            lscr.io/linuxserver/openssh-server:latest
+
+          for _ in $(seq 1 90); do
+            docker logs remotier-test 2>&1 | grep -q "Server listening on" && exit 0
+            sleep 2
+          done
+          echo "sshd never came up" >&2
+          docker logs remotier-test
+          exit 1
+
+      - name: Live SSH tests
+        run: |
+          eval "$(ssh-agent -s -a /tmp/remotier-agent.sock)"
+          SSH_AUTH_SOCK=/tmp/remotier-agent.sock ssh-add /tmp/remotier-testkey
+          SSH_AUTH_SOCK=/tmp/remotier-agent.sock \
+            cargo test --manifest-path src-tauri/Cargo.toml --test ssh_live -- \
+              --ignored --test-threads=1
+
+      - name: sshd logs on failure
+        if: failure()
+        run: docker logs remotier-test

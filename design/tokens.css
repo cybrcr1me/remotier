@@ -1,0 +1,54 @@
+/* Remotier design tokens — v1.0 */
+:root {
+  /* Surfaces */
+  --rm-void:    #000000; /* app canvas */
+  --rm-shell:   #050605; /* panels, sidebars */
+  --rm-raised:  #0F110F; /* hover, selected rows */
+  --rm-rule:    #1F221F; /* 1px borders, dividers */
+  --rm-rule-lo: #101210; /* row separators inside lists */
+  --rm-control: #2A2E2A; /* input + secondary button borders */
+
+  /* Ink */
+  --rm-bone:  #E8EBE6; /* primary text */
+  --rm-ink-2: #A8ADA8; /* body copy, host addresses (9.2:1) */
+  --rm-dim:   #7E827E; /* secondary text, shortcut keys (5.4:1) */
+  --rm-faint: #6B6F6B; /* captions, non-essential meta (4.1:1) */
+
+  /* Accent — signal only, max ~3% of any view */
+  --rm-lime:       #D9FF00;
+  --rm-lime-hover: #E9FF6B;
+  --rm-on-lime:    #000000;
+
+  /* Status */
+  --rm-ok:    #D9FF00; /* connected */
+  --rm-warn:  #E8A33D; /* reconnecting, high latency */
+  --rm-error: #E5484D; /* refused, host key changed */
+  --rm-idle:  #6B6F6B;
+
+  /* Type */
+  --rm-font-display: 'Martian Mono', ui-monospace, monospace;
+  --rm-font-ui: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+
+  /* Radius */
+  --rm-radius-row: 0px;
+  --rm-radius-control: 5px;
+  --rm-radius-panel: 10px;
+  --rm-radius-icon: 29px; /* on a 128px app-icon tile */
+
+  /* Space — 8px grid, 4px for dense lists */
+  --rm-space-1: 4px;
+  --rm-space-2: 8px;
+  --rm-space-3: 12px;
+  --rm-space-4: 16px;
+  --rm-space-6: 24px;
+  --rm-space-8: 32px;
+  --rm-space-12: 48px;
+
+  /* Motion */
+  --rm-ease: cubic-bezier(0.2, 0, 0, 1);
+  --rm-dur-state: 120ms;
+  --rm-dur-panel: 240ms;
+
+  /* Rows */
+  --rm-row-height: 36px;
+}

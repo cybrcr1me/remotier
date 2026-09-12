@@ -1,0 +1,20 @@
+<!-- Paste into your repo's CLAUDE.md -->
+
+## Remotier design language
+
+Dark only; there is no light theme. Import `tokens.css` and use `var(--rm-*)` — never raw hex in components.
+
+Surfaces: canvas `--rm-void` #000, panels `--rm-shell` #050605, hover/selected `--rm-raised` #0F110F, borders `--rm-rule` #1F221F.
+Text: primary `--rm-bone` #E8EBE6, body `--rm-ink-2` #A8ADA8, secondary `--rm-dim` #7E827E. Nothing dimmer than #7E827E for text a user must read.
+Accent `--rm-lime` #D9FF00 is a signal, not a surface: one lime element per view, two at most. Never a lime gradient, never lime behind body text, never a second accent hue.
+Status: connected = lime, warning = #E8A33D, error = #E5484D, idle = #6B6F6B, shown as a 6px square, never a pill or badge.
+
+Type: 'Martian Mono' 600/700 for headings and the wordmark only (tracking −2% to −3.5%, never below 12px, never in paragraphs); 'JetBrains Mono' 300/400/500 for everything else. Labels are 10–11px uppercase, tracking 0.16em.
+
+Layout: 8px spacing grid (4px in dense lists). Radius 0 for data rows and tables, 5px for controls, 10px for panels. Separate regions with 1px rules — no box-shadows, no elevation. Data rows are 36px with no zebra striping.
+
+Motion: 120ms state, 240ms panels, `cubic-bezier(0.2, 0, 0, 1)`. No spring, no bounce. Connection state changes are instant. Loading is a blinking lime block cursor, never a spinner.
+
+Every action needs a keyboard shortcut, displayed inline next to the action, not hidden in a menu.
+
+UI copy: terse, exact, deadpan. State the fact, then the next keystroke ("No host selected. Pick one. ⌘K searches all 41."). No exclamation marks, no emoji, no "Oops", no "Let's", no welcome tours.

@@ -1,0 +1,80 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  # Lets a release be built without tagging, e.g. to check the bundles still produce.
+  workflow_dispatch:
+
+jobs:
+  # Fails the release before an hour of build time, not after: a tag whose version does
+  # not match the three manifests produces installers that lie about what they are.
+  version:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Versions agree with the tag
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            scripts/check-version.sh "${{ github.ref_name }}"
+          else
+            scripts/check-version.sh
+          fi
+
+  build:
+    needs: version
+    permissions:
+      contents: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            name: Linux
+          - platform: windows-latest
+            name: Windows
+
+    runs-on: ${{ matrix.platform }}
+    name: ${{ matrix.name }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf libgtk-3-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: ${{ matrix.platform }}
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Windows signing is not configured. Until it is, SmartScreen warns until the
+          # binary builds reputation; see docs/RELEASING.md.
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Remotier ${{ github.ref_name }}
+          releaseBody: |
+            See the assets below to download and install this version.
+
+            The macOS build is signed on a developer machine and uploaded to this draft
+            before it is published.
+          # Draft on purpose. macOS is built by hand (`bun run build:mac`) because GitHub
+          # bills macOS runners at ten times the Linux rate, and a release published
+          # without waiting for it would ship with no Mac download at all.
+          releaseDraft: true
+          prerelease: false
